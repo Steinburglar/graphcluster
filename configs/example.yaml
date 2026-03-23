@@ -1,0 +1,29 @@
+input:
+  format: lammps
+  topology: path/to/topology.data
+  trajectory: path/to/trajectory.dump
+
+frames:
+  start: 0
+  stop: 10
+  stride: 1
+
+graph:
+  source: trajectory
+  mode: cutoff_distance
+  cutoff: 3.5
+  directed: false
+
+partition:
+  algorithm: placeholder
+  warm_start: true
+
+tracking:
+  enabled: true
+  overlap_metric: jaccard
+  match_threshold: 0.5
+
+output:
+  directory: outputs/run1
+  write_csv: true
+  write_vmd: false

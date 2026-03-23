@@ -1,0 +1,29 @@
+input:
+  format: lammps
+  topology: path/to/topology.data
+  trajectory: path/to/trajectory.dump
+  edge_data_path: path/to/allegro_edges.dat
+
+frames:
+  start: 0
+  stop: 10
+  stride: 10
+
+graph:
+  source: allegro
+  mode: external_edge_data
+  directed: false
+
+partition:
+  algorithm: placeholder
+  warm_start: true
+
+tracking:
+  enabled: true
+  overlap_metric: jaccard
+  match_threshold: 0.5
+
+output:
+  directory: outputs/allegro_run
+  write_csv: true
+  write_vmd: true

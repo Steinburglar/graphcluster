@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphcluster"
+version = "0.1.0"
+description = "Scaffolding for sparse weighted graph clustering on MD trajectories."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Lucas Steinberger" }
+]
+dependencies = [
+  "ase>=3.23",
+  "numpy>=1.26",
+  "PyYAML>=6.0",
+  "scipy>=1.11",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+graphcluster = "graphcluster.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

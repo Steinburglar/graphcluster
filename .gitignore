@@ -1,0 +1,43 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Coverage / test output
+.coverage
+htmlcov/
+
+# Notebook artifacts
+.ipynb_checkpoints/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Local outputs
+outputs/
+*.log
+
+# Local datasets
+data/
+tests/data/**/*.bin
+tests/data/**/*.dump
+tests/data/**/*.lammpstrj
+tests/data/**/*.dcd
+tests/data/**/*.xtc
+tests/data/**/*.trr
+tests/data/**/*.npy
+tests/data/**/*.npz
+tests/data/**/*.h5
+
+# Keep placeholder directories
+!tests/data/**/.gitkeep
