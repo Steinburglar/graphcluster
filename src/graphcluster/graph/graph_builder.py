@@ -44,9 +44,10 @@ class GraphBuilder:
             adjacency = build_allegro_adjacency(frame, graph_config)
         else:
             adjacency = build_trajectory_adjacency(frame, graph_config)
+        num_nodes = len(frame.positions)
         return SparseWeightedGraph(
             frame_index=frame.index,
             adjacency=adjacency,
             directed=graph_config.get("directed", False),
-            metadata={"source": source},
+            metadata={"source": source, "num_nodes": num_nodes},
         )

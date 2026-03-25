@@ -16,6 +16,7 @@ def test_graph_builder_uses_trajectory_source_by_default() -> None:
     graph = builder.build(Frame(index=2, positions=[[0.0, 0.0, 0.0]], atom_types=["Ga"]))
     assert graph.frame_index == 2
     assert graph.metadata["source"] == "trajectory"
+    assert graph.metadata["num_nodes"] == 1
 
 
 def test_graph_builder_can_switch_to_allegro_source() -> None:

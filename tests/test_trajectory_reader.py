@@ -30,6 +30,31 @@ def test_trajectory_reader_reads_first_frame(default_toy_dataset) -> None:
     assert frame.metadata["num_atoms"] == 129
     assert set(frame.atom_types) == {1, 2}
     assert frame.positions.shape == (129, 3)
+    assert frame.cell_origin is not None
+    assert frame.cell_origin.tolist() == [-29.0, -29.0, -29.0]
+    assert frame.chemical_symbols is None
+
+
+def test_trajectory_reader_resolves_chemical_symbols_from_type_map(
+    default_toy_dataset,
+) -> None:
+    reader = TrajectoryReader.from_config(
+        {
+            "input": {
+                "trajectory": str(default_toy_dataset),
+                "backend": "ase",
+                "type_map": {1: "Ga", 2: "Pt"},
+            },
+            "frames": {
+                "start": 0,
+                "stop": 1,
+                "stride": 1,
+            },
+        }
+    )
+    frame = next(iter(reader))
+    assert frame.chemical_symbols is not None
+    assert set(frame.chemical_symbols) == {"Ga", "Pt"}
 
 
 def test_trajectory_reader_from_config_respects_backend_and_path(default_toy_dataset) -> None:

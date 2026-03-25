@@ -38,6 +38,7 @@ def test_runner_emits_one_bundle_per_frame(
     assert len(bundles) == 3
     assert bundles[0].frame.index == 0
     assert set(bundles[0].frame.atom_types) == {1, 2}
+    assert len(bundles[0].partition.labels) == bundles[0].frame.metadata["num_atoms"]
 
 
 def test_runner_uses_default_toy_dataset_from_fixture(

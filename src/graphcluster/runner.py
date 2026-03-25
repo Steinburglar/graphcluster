@@ -58,24 +58,28 @@ class TrajectoryPartitionRunner:
             graph_builder=GraphBuilder.from_config(config),
             partitioner=Partitioner.from_config(config),
             tracker=ClusterTracker.from_config(config),
+            visualizer=Visualizer.from_config(config),
         )
 
     def run(self) -> list[FrameBundle]:
         """Run the scaffold pipeline and return emitted bundles."""
         bundles: list[FrameBundle] = []
-        for frame in self.reader:
-            graph = self.graph_builder.build(frame)
-            local_partition = self.partitioner.partition_local(
-                graph,
-                previous_tracked_partition=self.tracker.previous_partition(),
-            )
-            tracked_partition = self.tracker.synchronize(local_partition)
-            bundle = FrameBundle(
-                frame=frame,
-                graph=graph,
-                partition=tracked_partition,
-                local_partition=local_partition,
-            )
-            bundles.append(bundle)
-            self.visualizer.consume(bundle)
+        try:
+            for frame in self.reader:
+                graph = self.graph_builder.build(frame)
+                local_partition = self.partitioner.partition_local(
+                    graph,
+                    previous_tracked_partition=self.tracker.previous_partition(),
+                )
+                tracked_partition = self.tracker.synchronize(local_partition)
+                bundle = FrameBundle(
+                    frame=frame,
+                    graph=graph,
+                    partition=tracked_partition,
+                    local_partition=local_partition,
+                )
+                bundles.append(bundle)
+                self.visualizer.consume(bundle)
+        finally:
+            self.visualizer.finalize()
         return bundles

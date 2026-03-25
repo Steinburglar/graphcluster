@@ -79,8 +79,10 @@ Across a full run:
   - `index`
   - `positions`
   - `box`
+  - `cell_origin`
   - `time`
   - `atom_types`
+  - `chemical_symbols`
   - `metadata`
 
   Notes:
@@ -102,7 +104,10 @@ Across a full run:
   together, but `Frame` itself should not carry graph or partition state.
 
 - `VisualizationPayload`
-  Backend-independent visualization handoff derived from a `FrameBundle`.
+  Backend-independent visualization handoff.
+  Current live/debug construction path: derived from a `FrameBundle`.
+  Intended future production path: may also be derived from a heavier saved
+  artifact via a dedicated reader/adapter.
 
 ### Trajectory-level objects
 
@@ -173,6 +178,13 @@ Current decision:
 - a real type-to-species mapping can be added later if source metadata becomes
   available
 
+Current implemented extension:
+- the input config may optionally provide `input.type_map`
+- if present, the reader preserves raw source labels in `atom_types` and also
+  resolves a parallel `chemical_symbols` list for visualization use
+- `atom_types` should be treated as source truth; `chemical_symbols` is the
+  interpreted display-friendly view
+
 ## Current implementation reality
 
 The architecture is ahead of the scientific implementation. Much of the
@@ -188,18 +200,14 @@ Current placeholder behavior:
 This means the project is architecturally coherent, but not yet scientifically
 real beyond the IO layer.
 
-### Important current bug / gap
+### Recently resolved scaffold gap
 
-The current end-to-end runner path can produce empty partition label lists for
-real trajectory frames.
-
-Why:
-- the reader records atom count on frame metadata
-- the graph builder does not yet propagate node count into graph metadata
-- the placeholder partitioner sizes labels from `graph.metadata["num_nodes"]`
-- when that key is absent, it defaults to zero-length labels
-
-This is not intentional. Treat it as a bug / scaffold gap.
+A previous scaffold bug caused the end-to-end runner path to emit empty
+partition label lists because graph node count was not being propagated into
+graph metadata. That specific issue was fixed by propagating node count through
+the graph object. The scientific middle of the pipeline is still placeholder
+logic, but the live debug path now preserves the intended one-label-per-atom
+shape.
 
 ## Config support: actual vs planned
 
@@ -258,6 +266,22 @@ Examples:
 - stable: dataclass fields on `Frame`, `Partition`, `FrameBundle`, etc.
 - unstable for now: many ad hoc `metadata` keys used for scaffolding/debugging
 
+## Visualization payload design
+
+`VisualizationPayload` should be treated as the common visualization contract.
+
+Current path:
+- live pipeline objects (`FrameBundle`) -> `VisualizationPayload` -> viewer/export backend
+
+Intended future path:
+- heavier saved artifact -> dedicated visualization reader/adapter -> `VisualizationPayload` -> same viewer/export backend
+
+Design implication:
+- viewer backends should depend on the payload, not on whether the payload came
+  from a live pipeline object or a post-run artifact
+- the current in-run construction path is for debugging convenience, not a
+  statement that visualization payloads must always be produced during the run
+
 ## Examples and docs status
 
 The YAML examples mix:
@@ -280,8 +304,7 @@ Important testing behavior:
 - current tests confirm that the toy LAMMPS binary can be read and converted
   into `Frame` objects
 
-At the latest checkpoint, the suite was green with 17 passing tests in the
-`nequip311` environment.
+At the latest checkpoint, the suite was green with 20 passing tests.
 
 ## Tooling and environment notes
 

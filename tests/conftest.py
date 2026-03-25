@@ -15,12 +15,12 @@ import pytest
 
 
 TESTS_DIR = Path(__file__).resolve().parent
-DATA_DIR = TESTS_DIR / "data"
+DATA_DIRS = [TESTS_DIR / "data", TESTS_DIR / "datasets"]
 DEFAULT_TOY_DATASET_BASENAME = "Ga80Pt20_129_773K_ss_1.all.bin"
 
 
 def toy_dataset_path(dataset_name: str | None = None) -> Path:
-    """Resolve a toy dataset path under ``tests/data``.
+    """Resolve a toy dataset path under the repository test-dataset directories.
 
     Args:
         dataset_name: Optional dataset filename. If omitted, use the current
@@ -35,12 +35,14 @@ def toy_dataset_path(dataset_name: str | None = None) -> Path:
     selected_name = dataset_name or DEFAULT_TOY_DATASET_BASENAME
     matches = sorted(
         path
-        for path in DATA_DIR.rglob("*")
+        for data_dir in DATA_DIRS
+        if data_dir.exists()
+        for path in data_dir.rglob("*")
         if path.is_file() and path.name == selected_name
     )
     if not matches:
         raise FileNotFoundError(
-            f"Could not find toy dataset '{selected_name}' under {DATA_DIR}."
+            f"Could not find toy dataset '{selected_name}' under {DATA_DIRS}."
         )
     return matches[0]
 
@@ -53,5 +55,5 @@ def default_toy_dataset() -> Path:
 
 @pytest.fixture
 def toy_dataset_factory():
-    """Return a helper for resolving named toy datasets under ``tests/data``."""
+    """Return a helper for resolving named toy datasets under test data roots."""
     return toy_dataset_path

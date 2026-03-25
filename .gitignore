@@ -10,9 +10,11 @@ build/
 dist/
 *.egg-info/
 .eggs/
+pip-wheel-metadata/
 
 # Coverage / test output
 .coverage
+.coverage.*
 htmlcov/
 
 # Notebook artifacts
@@ -26,6 +28,10 @@ env/
 # Local outputs
 outputs/
 *.log
+*.extxyz
+*.traj
+*.xyz
+*.png
 
 # Local datasets
 data/

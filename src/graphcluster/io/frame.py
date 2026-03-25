@@ -28,6 +28,8 @@ class Frame:
     index: int
     positions: Any
     box: Any | None = None
+    cell_origin: Any | None = None
     time: float | None = None
     atom_types: Sequence[str | int] | None = None
+    chemical_symbols: Sequence[str] | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

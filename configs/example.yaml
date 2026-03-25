@@ -18,12 +18,18 @@ partition:
   algorithm: placeholder
   warm_start: true
 
+visualization:
+  enabled: true
+  backend: ase
+  mode: traj
+  output_path: outputs/example/visualization.extxyz
+
 tracking:
   enabled: true
   overlap_metric: jaccard
   match_threshold: 0.5
 
 output:
-  directory: outputs/run1
+  directory: outputs/example
   write_csv: true
   write_vmd: false
