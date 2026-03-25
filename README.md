@@ -20,6 +20,9 @@ What exists now:
 - a package-owned core object model (`Frame`, `SparseWeightedGraph`, `Partition`, `FrameBundle`)
 - an online tracking vs trajectory-analysis split in the design
 - a working ASE-backed trajectory reader path for the toy LAMMPS binary dataset
+- a real cutoff-based sparse graph builder with configurable edge-weight kernels
+- a Leiden-based local partitioning path with optional warm starts
+- a streaming runtime that writes visualization and lifecycle-report artifacts without keeping the full trajectory in memory
 - a growing test suite around the current scaffold
 
 ## Current design
@@ -32,12 +35,17 @@ Across time:
 
 `TrackedPartition(t-1) + LocalPartition(t) -> ClusterTracker -> TrackedPartition(t)`
 
+Across a full run:
+
+`TrajectoryReader -> transient FrameBundle -> visualization artifact writer + lifecycle report recorder`
+
 Key design choices:
 - the core stays package-owned rather than built directly on ASE / OVITO / MDAnalysis objects
 - sparse weighted graphs are the default graph representation
 - tracking happens online in the main forward pass
 - trajectory-level cluster analysis is separate from frame-to-frame tracking
 - visualization is treated as a first-class part of the workflow
+- the runtime is streaming-first; in-memory trajectory collection is debug-only
 
 ## Current IO direction
 
@@ -136,28 +144,86 @@ cleaner and more concise.
 ## Near-term focus
 
 The next development steps are likely to be:
-- continue improving the real IO path
-- start building graph construction on top of `Frame`
-- keep the tests anchored to the toy dataset as functionality grows
+- expand the different edge-weight kernels available in graph construction
+- improve tracking and the statistics derived from tracked partitions
+- improve and add report data access and report visualizations
 
-## Debug Visualization
+## Partition Tuning
 
-The pipeline now supports an ASE-backed debug visualization artifact path. A
-run can write an ASE trajectory file by adding:
+Leiden settings are controlled from the `partition:` block in the config. For
+the currently supported objectives, `resolution` can be used to make communities
+coarser or finer:
+
+```yaml
+partition:
+  algorithm: leiden
+  objective: cpm
+  resolution: 0.05
+  warm_start: true
+```
+
+Notes:
+- `modularity` ignores `resolution`
+- `rb_configuration` and `cpm` use `resolution`
+- lower `resolution` tends to merge communities
+- higher `resolution` tends to split them
+
+For graph weights, `kernel: binary` or an inverse-distance-style kernel is
+usually a more natural community-detection default than `kernel: distance`,
+because Leiden interprets larger weights as stronger connections.
+
+## Runtime Artifacts
+
+The runtime is organized around transient `FrameBundle`s. The runner streams one
+bundle at a time into artifact writers instead of collecting the whole
+trajectory by default.
+
+The two main first-class outputs are:
+- a viewer-friendly trajectory artifact
+- a lifecycle report artifact
+
+The visualization artifact can be enabled like this:
 
 ```yaml
 visualization:
   enabled: true
   backend: ase
   mode: traj
+  write_batch_size: 10
   output_path: outputs/debug/visualization.extxyz
 ```
 
-The important architectural idea is that `VisualizationPayload` is the common
-backend-independent view model. Right now it is constructed during the live
-pipeline from `FrameBundle`, which is useful for debugging. In a more finished
-workflow, the same payload shape may also be constructed later from a heavier
-saved artifact, then handed into the same viewer/export backends.
+The lifecycle report artifact can be enabled like this:
+
+```yaml
+analysis:
+  enabled: true
+  write_batch_size: 10
+  output_path: outputs/debug/cluster_lifecycle_report.jsonl
+```
+
+Both writers support `write_batch_size` so we can trade off write frequency
+against transient in-memory buffering.
+
+The report artifact can later be loaded without rerunning clustering:
+
+```python
+from graphcluster.analysis.lifecycle_report import ClusterLifecycleReport
+
+report = ClusterLifecycleReport.from_path("outputs/debug/cluster_lifecycle_report.jsonl")
+print(report.summary)
+print(report.get_births()[:5])
+```
+
+There is also a starter notebook for this workflow at
+[`notebooks/inspect_lifecycle_report.ipynb`](/n/home12/lsteinberger/graphcluster/notebooks/inspect_lifecycle_report.ipynb).
+
+The important architectural ideas are:
+- `FrameBundle` is the transient in-memory handoff between core pipeline steps
+- visualization and reporting are persistent artifact sinks, not reasons to keep
+  the whole trajectory in RAM
+- later, post-run readers can consume those artifacts without rerunning the full
+  graph-partitioning pipeline
 
 If the input trajectory uses raw type IDs such as LAMMPS `type`, you can supply
 an optional source-level mapping so the visualizer can display real chemical
@@ -175,6 +241,10 @@ Current semantics:
 - `atom_types` preserve the raw labels from the input source
 - `chemical_symbols` are an optional interpreted view derived from `input.type_map`
 - ASE display should use `chemical_symbols` when available
+- the current ASE artifact keeps only the meaningful extra per-atom arrays:
+  `cluster_label`, `local_cluster_label`, and `raw_atom_type`
+- on the first frame, tracked `cluster_label` now preserves the local partition
+  labels instead of renumbering them
 
 You can then inspect the artifact with:
 

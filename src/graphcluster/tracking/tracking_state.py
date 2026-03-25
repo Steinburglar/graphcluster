@@ -24,3 +24,4 @@ class TrackingState:
     """Hold the minimal previous tracked state for online synchronization."""
 
     previous_tracked_partition: Partition | None = None
+    next_cluster_id: int = 0

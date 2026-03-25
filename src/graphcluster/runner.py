@@ -1,22 +1,19 @@
 # Date: 2026-03-23
 # Requested attribution note: scaffold drafted with AI assistance under direction of Lucas Steinberger.
-"""Top-level coordinator for the trajectory partitioning pipeline.
+"""Top-level coordinator for the streaming partitioning pipeline.
 
-In intuitive terms, this file plays the role that a trainer loop would play in
-an ML project. It owns the forward pass over the trajectory:
+In intuitive terms, this file owns the forward pass over the trajectory while
+keeping the in-memory working set bounded:
 
-1. load a frame
-2. build a graph
-3. partition it
-4. synchronize labels against the previous tracked frame
-5. package the result into a frame bundle
-6. hand the bundle to visualization or export
+1. load one frame
+2. build one graph
+3. partition and track one frame
+4. package a transient frame bundle
+5. hand that bundle to artifact writers
+6. discard the transient bundle unless collection was explicitly requested
 
-Who touches this:
-- people changing overall pipeline ordering or orchestration
-
-Who this touches:
-- I/O, graph building, partitioning, tracking, bundling, and visualization
+This streaming model is the core runtime path for both small debug runs and
+large MD trajectories.
 """
 
 from __future__ import annotations
@@ -24,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .analysis.lifecycle_recorder import ClusterLifecycleRecorder
 from .bundle.frame_bundle import FrameBundle
 from .graph.graph_builder import GraphBuilder
 from .io.trajectory_reader import TrajectoryReader
@@ -31,6 +29,16 @@ from .partitioning.partitioner import Partitioner
 from .tracking.cluster_tracker import ClusterTracker
 from .utils.config import load_config
 from .visualization.visualizer import Visualizer
+
+
+@dataclass
+class TrajectoryRunResult:
+    """Summarize the outputs of one trajectory-processing run."""
+
+    frames_processed: int = 0
+    visualization_artifacts: list[Path] = field(default_factory=list)
+    analysis_artifact: Path | None = None
+    collected_bundles: list[FrameBundle] = field(default_factory=list)
 
 
 @dataclass
@@ -46,6 +54,7 @@ class TrajectoryPartitionRunner:
     graph_builder: GraphBuilder
     partitioner: Partitioner
     tracker: ClusterTracker
+    lifecycle_recorder: ClusterLifecycleRecorder
     visualizer: Visualizer = field(default_factory=Visualizer)
 
     @classmethod
@@ -58,12 +67,14 @@ class TrajectoryPartitionRunner:
             graph_builder=GraphBuilder.from_config(config),
             partitioner=Partitioner.from_config(config),
             tracker=ClusterTracker.from_config(config),
+            lifecycle_recorder=ClusterLifecycleRecorder.from_config(config),
             visualizer=Visualizer.from_config(config),
         )
 
-    def run(self) -> list[FrameBundle]:
-        """Run the scaffold pipeline and return emitted bundles."""
-        bundles: list[FrameBundle] = []
+    def run(self, *, collect_bundles: bool = False) -> TrajectoryRunResult:
+        """Run the streaming pipeline and return artifact locations and counts."""
+        collected_bundles: list[FrameBundle] = []
+        frames_processed = 0
         try:
             for frame in self.reader:
                 graph = self.graph_builder.build(frame)
@@ -78,8 +89,17 @@ class TrajectoryPartitionRunner:
                     partition=tracked_partition,
                     local_partition=local_partition,
                 )
-                bundles.append(bundle)
+                if collect_bundles:
+                    collected_bundles.append(bundle)
+                self.lifecycle_recorder.consume(bundle)
                 self.visualizer.consume(bundle)
+                frames_processed += 1
         finally:
+            analysis_artifact = self.lifecycle_recorder.finalize()
             self.visualizer.finalize()
-        return bundles
+        return TrajectoryRunResult(
+            frames_processed=frames_processed,
+            visualization_artifacts=list(self.visualizer.written_artifacts),
+            analysis_artifact=analysis_artifact,
+            collected_bundles=collected_bundles,
+        )

@@ -8,11 +8,10 @@ from pathlib import Path
 
 from ase.io import read
 
-from graphcluster.analysis.cluster_lifecycle_analyzer import ClusterLifecycleAnalyzer
+from graphcluster.analysis.lifecycle_report import ClusterLifecycleReport
 from graphcluster.bundle.frame_bundle import FrameBundle
 from graphcluster.graph.sparse_graph import SparseWeightedGraph
 from graphcluster.partitioning.partition import Partition
-from graphcluster.partitioning.partition_trajectory import PartitionTrajectory
 from graphcluster.runner import TrajectoryPartitionRunner
 from graphcluster.visualization.ase_viewer import payload_to_ase_atoms
 from graphcluster.visualization.payload import VisualizationPayload
@@ -38,6 +37,7 @@ def test_payload_to_ase_atoms_keeps_debug_arrays() -> None:
     assert atoms.arrays["cluster_label"].tolist() == [7, 9]
     assert atoms.arrays["local_cluster_label"].tolist() == [3, 4]
     assert atoms.arrays["raw_atom_type"].tolist() == [1, 2]
+    assert "tags" not in atoms.arrays
     assert atoms.info["cell_origin"] == [-1.0, -1.0, -1.0]
 
 
@@ -72,6 +72,8 @@ def test_visualizer_writes_ase_trajectory_artifact(tmp_path: Path) -> None:
     assert len(frames) == 1
     assert frames[0].get_chemical_symbols() == ["Pt"]
     assert frames[0].arrays["cluster_label"].tolist() == [5]
+    assert "tags" not in frames[0].arrays
+    assert "chemical_symbols" not in frames[0].info
 
 
 def test_pipeline_can_run_analysis_and_write_visualization(
@@ -79,6 +81,7 @@ def test_pipeline_can_run_analysis_and_write_visualization(
     default_toy_dataset: Path,
 ) -> None:
     artifact_path = tmp_path / "debug_visualization.extxyz"
+    report_path = tmp_path / "cluster_lifecycle_report.jsonl"
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         "\n".join(
@@ -94,32 +97,38 @@ def test_pipeline_can_run_analysis_and_write_visualization(
                 "  stride: 1",
                 "graph:",
                 "  source: trajectory",
+                "  cutoff: 3.5",
+                "  kernel: distance",
                 "partition:",
+                "  algorithm: leiden",
                 "  warm_start: true",
                 "visualization:",
                 "  enabled: true",
                 "  backend: ase",
                 "  mode: traj",
                 f"  output_path: {artifact_path}",
+                "analysis:",
+                "  enabled: true",
+                f"  output_path: {report_path}",
             ]
         ),
         encoding="utf-8",
     )
 
     runner = TrajectoryPartitionRunner.from_config_path(config_path)
-    bundles = runner.run()
-
-    trajectory = PartitionTrajectory()
-    for bundle in bundles:
-        trajectory.append(bundle.partition)
+    result = runner.run(collect_bundles=True)
+    assert result.frames_processed == 2
+    for bundle in result.collected_bundles:
         assert len(bundle.partition.labels) == bundle.frame.metadata["num_atoms"]
 
-    report = ClusterLifecycleAnalyzer().analyze(trajectory)
-    assert report.summary["num_partitions"] == 2
+    report = ClusterLifecycleReport.from_path(report_path)
+    assert report.summary["num_frames"] == 2
     assert artifact_path.exists()
+    assert report_path.exists()
 
     frames = read(str(artifact_path), index=":")
     assert len(frames) == 2
     assert set(frames[0].get_chemical_symbols()) == {"Ga", "Pt"}
     assert frames[0].arrays["cluster_label"].shape[0] == 129
     assert list(frames[0].info["cell_origin"]) == [-29.0, -29.0, -29.0]
+    assert len(report.get_frame_cluster_counts()) == 2

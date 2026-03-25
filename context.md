@@ -67,7 +67,17 @@ Across time:
 
 Across a full run:
 
-`TrajectoryReader -> graph builder -> partitioner -> tracker -> frame bundle -> visualization/export`
+`TrajectoryReader -> graph builder -> partitioner -> tracker -> transient FrameBundle -> artifact writers`
+
+Current artifact writers:
+- ASE visualization writer
+- lifecycle report recorder
+
+Important runtime point:
+- the runner is now streaming-first
+- `FrameBundle` is the transient in-memory unit
+- the runtime should not materialize a whole frame-bundle trajectory by default
+- in-memory trajectory collections are debug/test helpers, not the core model
 
 ## Object model
 
@@ -115,17 +125,21 @@ Across a full run:
   Public facade for reading frames.
 
 - `PartitionTrajectory`
-  Append-only store of tracked partitions.
+  Append-only in-memory store of tracked partitions for small runs and tests.
+  Not the core runtime output.
 
 - `ClusterTracker`
   Online frame-to-frame ID synchronizer.
 
+- `ClusterLifecycleRecorder`
+  Streaming writer that records trajectory-level lifecycle data into a report
+  artifact during the run.
+
 - `ClusterLifecycleAnalyzer`
-  Separate trajectory-level analysis object for lifetimes, births, deaths,
-  splits, merges, etc.
+  Lightweight in-memory helper for small/offline analysis.
 
 - `ClusterLifecycleReport`
-  Output of trajectory-level analysis.
+  User-facing report object loaded from the lifecycle report artifact.
 
 - `TrajectoryPartitionRunner`
   Top-level coordinator of the main loop.
@@ -140,7 +154,9 @@ Across a full run:
    The design should avoid a second labeling pass over already emitted objects.
 
 3. `FrameBundle` should be complete when emitted.
-   It should not be a half-filled object waiting for future-derived information.
+   It should not be a half-filled object waiting for future-derived information,
+   but it is also not intended to be retained for the whole trajectory by
+   default.
 
 4. If future view-like behavior is needed for memory efficiency, it should use
    explicit references / handles rather than hidden shared-state magic.
@@ -187,18 +203,21 @@ Current implemented extension:
 
 ## Current implementation reality
 
-The architecture is ahead of the scientific implementation. Much of the
-post-IO pipeline is still scaffold logic.
+The project is still early-stage, but the core forward path is now real enough
+to be debugged end to end:
+- trajectory reading is real
+- cutoff-based graph construction is real
+- Leiden local partitioning is real
+- overlap-based tracking is real
+- visualization artifact writing is real
+- lifecycle report recording is real
 
-Current placeholder behavior:
-- `GraphBuilder` currently only chooses a source and wraps placeholder
-  adjacency-like data
-- `PlaceholderPartitionAlgorithm` is still the only partitioning algorithm
-- `ClusterTracker` currently just copies labels into a tracked partition
-- `ClusterLifecycleAnalyzer` currently only reports partition count
-
-This means the project is architecturally coherent, but not yet scientifically
-real beyond the IO layer.
+Still simplified / early:
+- graph kernels are still basic and cutoff handling is still simple
+- tracking heuristics are useful but not yet scientifically mature
+- in-memory `ClusterLifecycleAnalyzer` is still minimal compared with the new
+  streaming report recorder
+- report visualization and plotting are still very early
 
 ### Recently resolved scaffold gap
 
@@ -219,16 +238,19 @@ Supported in the runtime today:
 - `frames.stop`
 - `frames.stride`
 - `graph.source`
+- `graph.cutoff`
+- `graph.kernel`
 - `partition.warm_start`
-
-Accepted but still placeholder-ish:
 - `partition.algorithm`
+- `partition.objective`
+- `partition.resolution`
+- `tracking.*`
+- `visualization.*`
+- `analysis.*`
 
 Present in example configs but not meaningfully implemented yet:
 - `input.topology`
 - `graph.mode`
-- `graph.cutoff`
-- `tracking.*`
 - `output.*`
 
 ## Canonical adjacency direction
@@ -252,6 +274,8 @@ The intended tracked-partition semantics are:
 
 Current label policy:
 - one label per atom in row order is the intended contract
+- on the first frame, tracked labels now preserve the local partition labels
+  rather than being renumbered for visualization/reporting convenience
 - there is currently no sentinel value contract for noise / unassigned atoms
 - if needed later, `-1` is the most natural future choice, but it is not yet a
   project-level guarantee
@@ -281,6 +305,9 @@ Design implication:
   from a live pipeline object or a post-run artifact
 - the current in-run construction path is for debugging convenience, not a
   statement that visualization payloads must always be produced during the run
+- the current ASE artifact stores the meaningful extra per-atom arrays only:
+  `cluster_label`, `local_cluster_label`, and `raw_atom_type`
+- older redundant convenience data such as ASE `tags` has been removed
 
 ## Examples and docs status
 
@@ -304,7 +331,7 @@ Important testing behavior:
 - current tests confirm that the toy LAMMPS binary can be read and converted
   into `Frame` objects
 
-At the latest checkpoint, the suite was green with 20 passing tests.
+At the latest checkpoint, the suite was green with 32 passing tests.
 
 ## Tooling and environment notes
 
@@ -345,18 +372,12 @@ These are still open design areas and should not be assumed solved:
 - how Allegro-derived edge data will enter the pipeline
 - whether residue/coarse-grained views should be first-class later
 
-## Immediate next priority
+## Immediate next priorities
 
-The next important milestone is real graph construction.
-
-More concretely:
-- keep the real IO path working
-- propagate enough graph/node information so end-to-end partitions are not empty
-- replace placeholder graph construction with real sparse weighted adjacency
-  building
-
-This is a better next milestone than further config polish or trajectory-level
-lifecycle analysis.
+The next important milestones are:
+- expand the different edge-weight kernels available in graph construction
+- improve tracking and the statistics derived from tracked partitions
+- improve and add report data access and report visualizations
 
 ## Guidance for future AI assistants
 

@@ -1,8 +1,8 @@
 # Runnable debug config for the repository toy dataset.
 #
-# This is meant to exercise the current scaffold end to end:
-# read frames -> build placeholder graph -> partition -> track -> write
-# ASE-readable visualization output.
+# This is meant to exercise the current end-to-end path:
+# read frames -> build cutoff graph -> Leiden partition -> track
+# -> stream transient frame bundles into artifact writers.
 
 input:
   backend: ase
@@ -18,17 +18,27 @@ frames:
 
 graph:
   source: trajectory
+  cutoff: 3.5
+  kernel: binary
   directed: false
 
 partition:
-  algorithm: placeholder
+  algorithm: leiden
+  objective: cpm
+  resolution: 0.05
   warm_start: true
 
 visualization:
   enabled: true
   backend: ase
   mode: traj
+  write_batch_size: 1
   output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_debug/visualization.extxyz
+
+analysis:
+  enabled: true
+  write_batch_size: 1
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_debug/cluster_lifecycle_report.jsonl
 
 output:
   directory: /n/home12/lsteinberger/graphcluster/outputs/toy_debug

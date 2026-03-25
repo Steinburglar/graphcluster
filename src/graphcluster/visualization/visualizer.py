@@ -1,27 +1,11 @@
 # Date: 2026-03-23
 # Requested attribution note: scaffold drafted with AI assistance under direction of Lucas Steinberger.
-"""Project-level visualization coordinator.
+"""Streaming visualization artifact recording.
 
-In intuitive terms, this is the place where project-owned data is turned into a
-backend-independent visualization payload and optionally passed to a viewer
-backend.
-
-Important design note:
-- today the visualizer constructs payloads during the live pipeline from
-  ``FrameBundle`` objects, which is useful for debugging
-- later, a separate post-run artifact reader may construct the same payload
-  shape from a heavier saved file
-- viewer backends should stay reusable across both paths
-
-Who touches this:
-- the runner
-- people wiring in actual viewer backends
-- future post-run visualization loaders/adapters
-
-Who this touches:
-- frame bundles today
-- visualization payloads
-- backend adapters such as ASE viewers
+In intuitive terms, this class consumes transient ``FrameBundle`` objects during
+the main pipeline and records a viewer-friendly artifact without retaining the
+whole trajectory in memory. A future post-run reader may still reconstruct the
+same payload shape from saved data, but the core runtime model is streaming.
 """
 
 from __future__ import annotations
@@ -36,20 +20,19 @@ from .payload import VisualizationPayload
 
 @dataclass
 class Visualizer:
-    """Consume live pipeline objects and prepare them for visualization.
-
-    This class currently owns the in-run construction path from ``FrameBundle``
-    to ``VisualizationPayload``. That should be understood as one payload
-    source, not the only payload source the project may ever support.
-    """
+    """Consume transient frame bundles and record visualization artifacts."""
 
     enabled: bool = False
     backend: str = "none"
     mode: str = "collect"
     output_path: Path | None = None
     every_n: int = 1
+    write_batch_size: int = 1
+    retain_payloads: bool = False
     consumed_payloads: list[VisualizationPayload] = field(default_factory=list)
     written_artifacts: list[Path] = field(default_factory=list)
+    _pending_payloads: list[VisualizationPayload] = field(default_factory=list, init=False, repr=False)
+    _frames_seen: int = field(default=0, init=False, repr=False)
     _writer: AseTrajectoryWriter | None = field(default=None, init=False, repr=False)
 
     @classmethod
@@ -60,6 +43,7 @@ class Visualizer:
         backend = visualization_config.get("backend", "none")
         mode = visualization_config.get("mode", "collect")
         every_n = max(1, int(visualization_config.get("every_n", 1)))
+        write_batch_size = max(1, int(visualization_config.get("write_batch_size", 1)))
         output_path = _resolve_output_path(config, visualization_config)
         return cls(
             enabled=enabled,
@@ -67,27 +51,32 @@ class Visualizer:
             mode=mode,
             output_path=output_path,
             every_n=every_n,
+            write_batch_size=write_batch_size,
+            retain_payloads=(mode == "collect"),
         )
 
     def consume(self, bundle: FrameBundle) -> VisualizationPayload:
-        """Convert a bundle into a visualization payload."""
+        """Convert a bundle into a visualization payload and stream it onward."""
         payload = VisualizationPayload.from_bundle(bundle)
-        self.consumed_payloads.append(payload)
+        if self.retain_payloads:
+            self.consumed_payloads.append(payload)
         if not self.enabled:
             return payload
-        if (len(self.consumed_payloads) - 1) % self.every_n != 0:
+        if self._frames_seen % self.every_n != 0:
+            self._frames_seen += 1
             return payload
         if self.backend == "ase" and self.mode == "traj":
-            writer = self._ensure_writer()
-            artifact_path = writer.write_payload(payload)
-            if artifact_path not in self.written_artifacts:
-                self.written_artifacts.append(artifact_path)
+            self._pending_payloads.append(payload)
+            if len(self._pending_payloads) >= self.write_batch_size:
+                self._flush_pending_payloads()
         elif self.backend == "ase" and self.mode == "view":
             view_with_ase(payload)
+        self._frames_seen += 1
         return payload
 
     def finalize(self) -> None:
         """Flush and close any backend-specific visualization resources."""
+        self._flush_pending_payloads()
         if self._writer is not None:
             self._writer.close()
 
@@ -101,6 +90,16 @@ class Visualizer:
         if self._writer is None:
             self._writer = AseTrajectoryWriter(self.output_path)
         return self._writer
+
+    def _flush_pending_payloads(self) -> None:
+        """Write buffered payloads to the visualization artifact."""
+        if not self._pending_payloads:
+            return
+        writer = self._ensure_writer()
+        artifact_path = writer.write_payloads(self._pending_payloads)
+        if artifact_path not in self.written_artifacts:
+            self.written_artifacts.append(artifact_path)
+        self._pending_payloads.clear()
 
 
 def _resolve_output_path(config: dict, visualization_config: dict) -> Path | None:

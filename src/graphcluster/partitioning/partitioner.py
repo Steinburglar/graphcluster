@@ -46,7 +46,11 @@ class Partitioner:
         algorithm = build_algorithm(partition_config)
         warm_start = partition_config.get("warm_start", False)
         initial_labels = None
-        if warm_start and previous_tracked_partition is not None:
+        if (
+            warm_start
+            and previous_tracked_partition is not None
+            and len(previous_tracked_partition.labels) == graph.metadata.get("num_nodes", 0)
+        ):
             initial_labels = previous_tracked_partition.labels
         labels = algorithm.run(graph, initial_labels=initial_labels)
         return Partition(

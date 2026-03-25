@@ -1,16 +1,11 @@
 # Date: 2026-03-23
 # Requested attribution note: scaffold drafted with AI assistance under direction of Lucas Steinberger.
-"""Append-only partition trajectory store.
+"""Append-only in-memory partition trajectory store.
 
-In intuitive terms, this module is where the project can keep a trajectory-level
-log of tracked partition results without forcing the whole pipeline to keep all
-state in memory.
-
-Who touches this:
-- the runner and trajectory-level analysis
-
-Who this touches:
-- partition objects
+In intuitive terms, this is the small-run / test helper for keeping tracked
+partitions in memory. The core runtime path is now streaming and should not be
+understood as materializing one of these objects by default for large
+trajectories.
 """
 
 from __future__ import annotations

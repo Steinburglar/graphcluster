@@ -3,6 +3,11 @@
 """Trajectory-level analysis layer for tracked partitions."""
 
 from .cluster_lifecycle_analyzer import ClusterLifecycleAnalyzer
+from .lifecycle_recorder import ClusterLifecycleRecorder
 from .lifecycle_report import ClusterLifecycleReport
 
-__all__ = ["ClusterLifecycleAnalyzer", "ClusterLifecycleReport"]
+__all__ = [
+    "ClusterLifecycleAnalyzer",
+    "ClusterLifecycleRecorder",
+    "ClusterLifecycleReport",
+]

@@ -19,10 +19,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from scipy import sparse
+
 from ..io.frame import Frame
 from .allegro_edges import build_allegro_adjacency
 from .sparse_graph import SparseWeightedGraph
-from .trajectory_edges import build_trajectory_adjacency
+from .trajectory_edges import (
+    build_trajectory_adjacency,
+    resolve_cutoff_radius,
+    resolve_kernel_config,
+)
 
 
 @dataclass
@@ -39,15 +45,22 @@ class GraphBuilder:
     def build(self, frame: Frame) -> SparseWeightedGraph:
         """Create the canonical graph object for a frame."""
         graph_config = self.config.get("graph", {})
+        input_config = self.config.get("input", {})
         source = graph_config.get("source", "trajectory")
         if source == "allegro":
             adjacency = build_allegro_adjacency(frame, graph_config)
         else:
-            adjacency = build_trajectory_adjacency(frame, graph_config)
+            adjacency = build_trajectory_adjacency(frame, graph_config, input_config=input_config)
         num_nodes = len(frame.positions)
+        metadata = {"source": source, "num_nodes": num_nodes}
+        if sparse.issparse(adjacency):
+            metadata["num_edges"] = int(adjacency.nnz // (1 if graph_config.get("directed", False) else 2))
+        if source == "trajectory":
+            metadata["cutoff"] = resolve_cutoff_radius(frame, graph_config, input_config=input_config)
+            metadata["kernel"] = resolve_kernel_config(graph_config)[0]
         return SparseWeightedGraph(
             frame_index=frame.index,
             adjacency=adjacency,
             directed=graph_config.get("directed", False),
-            metadata={"source": source, "num_nodes": num_nodes},
+            metadata=metadata,
         )

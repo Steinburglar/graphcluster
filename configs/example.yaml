@@ -12,17 +12,26 @@ graph:
   source: trajectory
   mode: cutoff_distance
   cutoff: 3.5
+  kernel: binary
   directed: false
 
 partition:
-  algorithm: placeholder
+  algorithm: leiden
+  objective: cpm
+  resolution: 0.05
   warm_start: true
 
 visualization:
   enabled: true
   backend: ase
   mode: traj
+  write_batch_size: 10
   output_path: outputs/example/visualization.extxyz
+
+analysis:
+  enabled: true
+  write_batch_size: 10
+  output_path: outputs/example/cluster_lifecycle_report.jsonl
 
 tracking:
   enabled: true

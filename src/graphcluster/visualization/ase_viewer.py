@@ -39,15 +39,12 @@ def payload_to_ase_atoms(payload: VisualizationPayload):
 
     tracked_labels = np.asarray(payload.labels, dtype=int)
     atoms.new_array("cluster_label", tracked_labels)
-    atoms.set_tags(_labels_to_tags(payload.labels))
 
     if payload.local_labels is not None:
         atoms.new_array("local_cluster_label", np.asarray(payload.local_labels, dtype=int))
 
     if payload.atom_types is not None and _atom_types_are_ints(payload.atom_types):
         atoms.new_array("raw_atom_type", np.asarray(payload.atom_types, dtype=int))
-    if payload.chemical_symbols is not None:
-        atoms.info["chemical_symbols"] = list(payload.chemical_symbols)
 
     atoms.info["frame_index"] = payload.frame_index
     atoms.info["partition_kind"] = payload.metadata.get("partition_kind", "tracked")
@@ -75,20 +72,26 @@ class AseTrajectoryWriter:
     _trajectory: object | None = field(default=None, init=False, repr=False)
 
     def write_payload(self, payload: VisualizationPayload) -> Path:
-        """Append a payload to the configured trajectory artifact."""
+        """Append one payload to the configured trajectory artifact."""
+        return self.write_payloads([payload])
+
+    def write_payloads(self, payloads: list[VisualizationPayload]) -> Path:
+        """Append one or more payloads to the configured trajectory artifact."""
         from ase.io import write
 
+        if not payloads:
+            return self.output_path
         if self._trajectory is None:
             self.output_path.parent.mkdir(parents=True, exist_ok=True)
             self._trajectory = True
-        atoms = payload_to_ase_atoms(payload)
+        atoms = [payload_to_ase_atoms(payload) for payload in payloads]
         write(
             self.output_path,
             atoms,
             format="extxyz",
             append=bool(self.written_frames),
         )
-        self.written_frames.append(payload.frame_index)
+        self.written_frames.extend(payload.frame_index for payload in payloads)
         return self.output_path
 
     def close(self) -> None:
@@ -99,15 +102,6 @@ class AseTrajectoryWriter:
 def _atom_types_are_ints(atom_types) -> bool:
     """Return whether atom types can be stored as an integer ASE array."""
     return all(isinstance(value, (int, np.integer)) for value in atom_types)
-
-
-def _labels_to_tags(labels: list[int]) -> list[int]:
-    """Map arbitrary tracked labels to small positive ASE tags."""
-    ordered_labels = sorted(set(labels))
-    mapping = {label: index + 1 for index, label in enumerate(ordered_labels)}
-    return [mapping[label] for label in labels]
-
-
 def _resolve_ase_symbols(payload: VisualizationPayload, num_atoms: int) -> list[str]:
     """Choose the ASE element symbols to use for display."""
     if payload.chemical_symbols is not None:
