@@ -1,0 +1,46 @@
+# Matched comparison run for the toy dataset using a geometry-derived Gaussian
+# graph kernel. This is intended to be compared directly with the Allegro-edge
+# run in `toy_compare_allegro.yaml`.
+
+input:
+  backend: ase
+  trajectory: /n/home12/lsteinberger/graphcluster/tests/data/Ga80Pt20_129_773K_ss_1.all.bin
+  type_map:
+    1: Ga
+    2: Pt
+
+frames:
+  start: 0
+  stop: 5
+  stride: 1
+
+graph:
+  source: trajectory
+  cutoff: 3.5
+  kernel:
+    name: gaussian
+    sigma: 1.0
+  directed: false
+
+partition:
+  algorithm: leiden
+  objective: cpm
+  resolution: 0.001
+  warm_start: true
+
+visualization:
+  enabled: true
+  backend: ase
+  mode: traj
+  write_batch_size: 1
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_compare_gaussian/visualization.extxyz
+
+analysis:
+  enabled: true
+  write_batch_size: 1
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_compare_gaussian/cluster_lifecycle_report.jsonl
+
+output:
+  directory: /n/home12/lsteinberger/graphcluster/outputs/toy_compare_gaussian
+  write_csv: false
+  write_vmd: false

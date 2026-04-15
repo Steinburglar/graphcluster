@@ -21,8 +21,15 @@ def infer_trajectory_format(path: str, explicit_format: str | None = None) -> st
     """Infer the trajectory format when the caller did not specify one."""
     if explicit_format:
         return explicit_format
-    if Path(path).suffix == ".bin":
+    suffix = Path(path).suffix.lower()
+    if suffix == ".bin":
         return "lammps-dump-binary"
+    if suffix == ".xyz":
+        return "xyz"
+    if suffix == ".extxyz":
+        return "extxyz"
+    if suffix == ".traj":
+        return "traj"
     return None
 
 

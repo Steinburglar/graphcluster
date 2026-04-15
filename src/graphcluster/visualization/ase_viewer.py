@@ -39,6 +39,7 @@ def payload_to_ase_atoms(payload: VisualizationPayload):
 
     tracked_labels = np.asarray(payload.labels, dtype=int)
     atoms.new_array("cluster_label", tracked_labels)
+    atoms.new_array("cluster_color_code", _labels_to_color_codes(tracked_labels))
 
     if payload.local_labels is not None:
         atoms.new_array("local_cluster_label", np.asarray(payload.local_labels, dtype=int))
@@ -102,6 +103,14 @@ class AseTrajectoryWriter:
 def _atom_types_are_ints(atom_types) -> bool:
     """Return whether atom types can be stored as an integer ASE array."""
     return all(isinstance(value, (int, np.integer)) for value in atom_types)
+
+
+def _labels_to_color_codes(labels: np.ndarray) -> np.ndarray:
+    """Spread nearby tracked labels apart for ASE's scalar colormap."""
+    hashed = (labels.astype(np.int64) * 2654435761) % 9973
+    return hashed.astype(np.int32)
+
+
 def _resolve_ase_symbols(payload: VisualizationPayload, num_atoms: int) -> list[str]:
     """Choose the ASE element symbols to use for display."""
     if payload.chemical_symbols is not None:

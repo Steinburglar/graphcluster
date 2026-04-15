@@ -1,0 +1,38 @@
+# Example config for consuming a trajectory that has already been annotated
+# with Allegro edge energies by the separate allegro_ase_edge_export package.
+
+input:
+  backend: ase
+  trajectory: /n/home12/lsteinberger/graphcluster/outputs/toy_debug_allegro/allegro_edges.traj
+
+frames:
+  start: 0
+  stop: 5
+  stride: 1
+
+graph:
+  source: allegro
+  directed: false
+
+partition:
+  algorithm: leiden
+  objective: modularity
+  resolution: 0.0005
+  warm_start: true
+
+visualization:
+  enabled: true
+  backend: ase
+  mode: traj
+  write_batch_size: 1
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_debug_allegro/visualization.extxyz
+
+analysis:
+  enabled: true
+  write_batch_size: 1
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_debug_allegro/cluster_lifecycle_report.jsonl
+
+output:
+  directory: /n/home12/lsteinberger/graphcluster/outputs/toy_debug_allegro
+  write_csv: false
+  write_vmd: false

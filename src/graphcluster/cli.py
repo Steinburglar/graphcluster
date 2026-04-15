@@ -32,4 +32,4 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     runner = TrajectoryPartitionRunner.from_config_path(args.config)
-    runner.run()
+    runner.run(progress=True)

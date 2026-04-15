@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+import numpy as np
 from ase.io import iread
 
 from .frame import Frame
@@ -33,8 +34,15 @@ class ASETrajectorySource:
         path = Path(self.trajectory_path)
         if self.format:
             return self.format
-        if path.suffix == ".bin":
+        suffix = path.suffix.lower()
+        if suffix == ".bin":
             return "lammps-dump-binary"
+        if suffix == ".xyz":
+            return "xyz"
+        if suffix == ".extxyz":
+            return "extxyz"
+        if suffix == ".traj":
+            return "traj"
         return None
 
     def _ase_kwargs(self) -> dict:
@@ -46,14 +54,31 @@ class ASETrajectorySource:
             kwargs["colnames"] = ["id", "type", "x", "y", "z"]
         return kwargs
 
+    def _reference_trajectory_path(self) -> str | None:
+        input_config = self.input_config or {}
+        reference_path = input_config.get("cell_origin_reference_trajectory")
+        if reference_path:
+            return str(reference_path)
+        return None
+
+    def _reference_ase_kwargs(self) -> dict | None:
+        reference_path = self._reference_trajectory_path()
+        if reference_path is None:
+            return None
+        input_config = self.input_config or {}
+        reference_format = input_config.get("cell_origin_reference_format")
+        fmt = reference_format or infer_ase_format(reference_path)
+        kwargs: dict = {"index": slice(self.start, self.stop, self.stride)}
+        if fmt is not None:
+            kwargs["format"] = fmt
+        if fmt == "lammps-dump-binary":
+            kwargs["colnames"] = ["id", "type", "x", "y", "z"]
+        return kwargs
+
     def _frame_from_atoms(self, index: int, atoms) -> Frame:
-        atom_types = None
-        if "type" in atoms.arrays:
-            atom_types = atoms.arrays["type"].tolist()
-        chemical_symbols = self._resolve_chemical_symbols(atom_types)
-        cell_origin = atoms.get_celldisp()
-        if cell_origin is not None:
-            cell_origin = cell_origin.reshape(-1)
+        atom_types, chemical_symbols = self._resolve_species_labels(atoms)
+        metadata = self._build_frame_metadata(atoms)
+        cell_origin = resolve_cell_origin(atoms, metadata)
         return Frame(
             index=index,
             positions=atoms.get_positions(),
@@ -62,12 +87,30 @@ class ASETrajectorySource:
             time=None,
             atom_types=atom_types,
             chemical_symbols=chemical_symbols,
-            metadata={
+            metadata=metadata,
+        )
+
+    def _resolve_species_labels(self, atoms) -> tuple[list[int | str] | None, list[str] | None]:
+        """Resolve raw source labels and display symbols for one ASE frame."""
+        if "type" in atoms.arrays:
+            atom_types = atoms.arrays["type"].tolist()
+            return atom_types, self._resolve_chemical_symbols(atom_types)
+
+        chemical_symbols = [str(symbol) for symbol in atoms.get_chemical_symbols()]
+        if not chemical_symbols:
+            return None, None
+        return list(chemical_symbols), list(chemical_symbols)
+
+    def _build_frame_metadata(self, atoms) -> dict:
+        """Collect source metadata that may be useful later in the pipeline."""
+        metadata = {
                 "source": "ase",
                 "trajectory_path": self.trajectory_path,
                 "num_atoms": len(atoms),
-            },
-        )
+            }
+        if atoms.info:
+            metadata["ase_info"] = normalize_metadata_value(dict(atoms.info))
+        return metadata
 
     def _resolve_chemical_symbols(
         self,
@@ -94,8 +137,74 @@ class ASETrajectorySource:
         return chemical_symbols
 
     def __iter__(self) -> Iterator[Frame]:
-        for index, atoms in enumerate(
-            iread(self.trajectory_path, **self._ase_kwargs()),
+        reference_kwargs = self._reference_ase_kwargs()
+        if reference_kwargs is None:
+            for index, atoms in enumerate(
+                iread(self.trajectory_path, **self._ase_kwargs()),
+                start=self.start,
+            ):
+                yield self._frame_from_atoms(index, atoms)
+            return
+
+        reference_path = self._reference_trajectory_path()
+        assert reference_path is not None
+        current_iter = iread(self.trajectory_path, **self._ase_kwargs())
+        reference_iter = iread(reference_path, **reference_kwargs)
+        for index, (atoms, reference_atoms) in enumerate(
+            zip(current_iter, reference_iter),
             start=self.start,
         ):
-            yield self._frame_from_atoms(index, atoms)
+            frame = self._frame_from_atoms(index, atoms)
+            if frame.cell_origin is None or not np.any(frame.cell_origin):
+                reference_metadata = self._build_frame_metadata(reference_atoms)
+                reference_origin = resolve_cell_origin(reference_atoms, reference_metadata)
+                reference_origin = np.asarray(reference_origin, dtype=float).reshape(-1)
+                if reference_origin.size == 3 and np.any(reference_origin):
+                    frame.cell_origin = reference_origin
+                    frame.metadata.setdefault("reference_metadata", {})["cell_origin"] = (
+                        reference_origin.tolist()
+                    )
+            yield frame
+
+
+def infer_ase_format(path: str) -> str | None:
+    """Infer the ASE format for a path from its suffix."""
+    suffix = Path(path).suffix.lower()
+    if suffix == ".bin":
+        return "lammps-dump-binary"
+    if suffix == ".xyz":
+        return "xyz"
+    if suffix == ".extxyz":
+        return "extxyz"
+    if suffix == ".traj":
+        return "traj"
+    return None
+
+
+def normalize_metadata_value(value):
+    """Convert ASE metadata into plain Python containers when practical."""
+    if isinstance(value, dict):
+        return {str(key): normalize_metadata_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [normalize_metadata_value(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def resolve_cell_origin(atoms, metadata: dict) -> np.ndarray | None:
+    """Resolve cell origin from ASE celldisp or recorded metadata fallback."""
+    cell_origin = atoms.get_celldisp()
+    if cell_origin is not None:
+        cell_origin = np.asarray(cell_origin, dtype=float).reshape(-1)
+        if np.any(cell_origin):
+            return cell_origin
+
+    ase_info = metadata.get("ase_info")
+    if isinstance(ase_info, dict) and "cell_origin" in ase_info:
+        fallback = np.asarray(ase_info["cell_origin"], dtype=float).reshape(-1)
+        if fallback.size == 3:
+            return fallback
+    return cell_origin

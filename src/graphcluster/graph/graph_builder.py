@@ -26,7 +26,7 @@ from .allegro_edges import build_allegro_adjacency
 from .sparse_graph import SparseWeightedGraph
 from .trajectory_edges import (
     build_trajectory_adjacency,
-    resolve_cutoff_radius,
+    resolve_cutoff_spec,
     resolve_kernel_config,
 )
 
@@ -56,7 +56,9 @@ class GraphBuilder:
         if sparse.issparse(adjacency):
             metadata["num_edges"] = int(adjacency.nnz // (1 if graph_config.get("directed", False) else 2))
         if source == "trajectory":
-            metadata["cutoff"] = resolve_cutoff_radius(frame, graph_config, input_config=input_config)
+            cutoff, cutoff_source = resolve_cutoff_spec(frame, graph_config, input_config=input_config)
+            metadata["cutoff"] = cutoff
+            metadata["cutoff_source"] = cutoff_source
             metadata["kernel"] = resolve_kernel_config(graph_config)[0]
         return SparseWeightedGraph(
             frame_index=frame.index,

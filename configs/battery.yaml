@@ -1,4 +1,4 @@
-# Runnable debug config for the repository toy dataset.
+# Runnable debug config for the battery XYZ dataset.
 #
 # This is meant to exercise the current end-to-end path:
 # read frames -> build cutoff graph -> Leiden partition -> track
@@ -6,10 +6,8 @@
 
 input:
   backend: ase
-  trajectory: /n/home12/lsteinberger/graphcluster/tests/data/Ga80Pt20_129_773K_ss_1.all.bin
-  type_map:
-    1: Ga
-    2: Pt
+  format: xyz
+  trajectory: /n/netscratch/kozinsky_lab/Lab/lsteinberger/datasets/Battery/training_data/data/Dec23-complete-dataset_dft.xyz
 
 frames:
   start: 0
@@ -21,13 +19,13 @@ graph:
   cutoff: 3.5
   kernel:
     name: gaussian
-    sigma: 1.0    # higher sigma: fewer clusters, lower sigma: more clusters
+    sigma: 1.0
   directed: false
 
 partition:
   algorithm: leiden
   objective: modularity
-  resolution: 0.0005
+  resolution: 0.05
   warm_start: true
 
 visualization:
@@ -35,14 +33,14 @@ visualization:
   backend: ase
   mode: traj
   write_batch_size: 1
-  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_debug/visualization.extxyz
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/battery_debug/visualization.extxyz
 
 analysis:
   enabled: true
   write_batch_size: 1
-  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_debug/cluster_lifecycle_report.jsonl
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/battery_debug/cluster_lifecycle_report.jsonl
 
 output:
-  directory: /n/home12/lsteinberger/graphcluster/outputs/toy_debug
+  directory: /n/home12/lsteinberger/graphcluster/outputs/battery_debug
   write_csv: false
   write_vmd: false

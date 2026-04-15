@@ -35,6 +35,7 @@ def test_payload_to_ase_atoms_keeps_debug_arrays() -> None:
     assert atoms.get_chemical_symbols() == ["Ga", "Pt"]
     assert atoms.get_positions().tolist() == [[1.0, 1.0, 1.0], [2.0, 1.0, 1.0]]
     assert atoms.arrays["cluster_label"].tolist() == [7, 9]
+    assert atoms.arrays["cluster_color_code"].tolist() == [4972, 9242]
     assert atoms.arrays["local_cluster_label"].tolist() == [3, 4]
     assert atoms.arrays["raw_atom_type"].tolist() == [1, 2]
     assert "tags" not in atoms.arrays
@@ -72,6 +73,7 @@ def test_visualizer_writes_ase_trajectory_artifact(tmp_path: Path) -> None:
     assert len(frames) == 1
     assert frames[0].get_chemical_symbols() == ["Pt"]
     assert frames[0].arrays["cluster_label"].tolist() == [5]
+    assert "cluster_color_code" in frames[0].arrays
     assert "tags" not in frames[0].arrays
     assert "chemical_symbols" not in frames[0].info
 

@@ -1,0 +1,48 @@
+# Exploratory battery config using exported Allegro edge energies.
+#
+# This first annotates the battery XYZ trajectory with Allegro edge metadata,
+# then runs the normal graphcluster pipeline on the derived ASE trajectory.
+
+input:
+  backend: ase
+  format: xyz
+  trajectory: /n/netscratch/kozinsky_lab/Lab/lsteinberger/datasets/Battery/training_data/data/Dec23-complete-dataset_dft.xyz
+
+frames:
+  start: 0
+  stop: 5
+  stride: 1
+
+graph:
+  source: allegro
+  directed: false
+
+allegro:
+  mode: annotate_always
+  compiled_model: /n/home12/lsteinberger/models/compiled/Allegro-OAM-L-0.1.cpu.energies.nequip.pt2
+  annotated_trajectory_path: /n/home12/lsteinberger/graphcluster/outputs/battery_allegro_debug/allegro_edges.traj
+  device: cpu
+  species_to_model_type_map: null
+
+partition:
+  algorithm: leiden
+  objective: modularity
+  resolution: 0.05
+  warm_start: true
+
+visualization:
+  enabled: true
+  backend: ase
+  mode: traj
+  write_batch_size: 1
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/battery_allegro_debug/visualization.extxyz
+
+analysis:
+  enabled: true
+  write_batch_size: 1
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/battery_allegro_debug/cluster_lifecycle_report.jsonl
+
+output:
+  directory: /n/home12/lsteinberger/graphcluster/outputs/battery_allegro_debug
+  write_csv: false
+  write_vmd: false

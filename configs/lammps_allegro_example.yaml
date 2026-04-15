@@ -1,8 +1,7 @@
 input:
-  format: lammps
-  topology: path/to/topology.data
-  trajectory: path/to/trajectory.dump
-  edge_data_path: path/to/allegro_edges.dat
+  backend: ase
+  format: lammps-dump-binary
+  trajectory: path/to/trajectory.dump.bin
 
 frames:
   start: 0
@@ -11,19 +10,38 @@ frames:
 
 graph:
   source: allegro
-  mode: external_edge_data
   directed: false
 
+allegro:
+  mode: annotate_if_missing
+  compiled_model: path/to/compiled_model.nequip.pt2
+  annotated_trajectory_path: outputs/allegro_run/allegro_edges.traj
+  device: cuda
+  raw_type_map:
+    1: Ga
+    2: Pt
+  species_to_model_type_map: null
+
 partition:
-  algorithm: placeholder
+  algorithm: leiden
+  objective: modularity
   warm_start: true
 
 tracking:
-  enabled: true
   overlap_metric: jaccard
   match_threshold: 0.5
 
+visualization:
+  enabled: true
+  backend: ase
+  mode: traj
+  output_path: outputs/allegro_run/visualization.extxyz
+
+analysis:
+  enabled: true
+  output_path: outputs/allegro_run/cluster_lifecycle_report.jsonl
+
 output:
   directory: outputs/allegro_run
-  write_csv: true
-  write_vmd: true
+  write_csv: false
+  write_vmd: false

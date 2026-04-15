@@ -57,6 +57,10 @@ The IO layer is currently organized around:
 ASE is the current default backend because it is a practical starting point, but
 internal code should not depend directly on ASE objects.
 
+Current ASE-backed trajectory formats exercised in the project:
+- LAMMPS binary dumps via `lammps-dump-binary`
+- ordinary XYZ trajectories via `xyz`
+
 ## Toy dataset
 
 The current toy dataset used by the tests is a LAMMPS binary dump in
@@ -172,6 +176,53 @@ For graph weights, `kernel: binary` or an inverse-distance-style kernel is
 usually a more natural community-detection default than `kernel: distance`,
 because Leiden interprets larger weights as stronger connections.
 
+Current graph-kernel support includes:
+- `binary`
+- `distance`
+- `gaussian`
+- `inverse_distance`
+- `smooth_inverse_distance`
+
+The graph builder also supports a separate source path:
+- `graph.source: trajectory` builds edges from geometry
+- `graph.source: allegro` consumes exported Allegro edge arrays from ASE
+  trajectory metadata
+
+For the current Allegro path, the expected ASE metadata keys are:
+- `allegro_edge_indices`
+- `allegro_edge_energies`
+
+Current Allegro-to-graph semantics are intentionally simple:
+- exported Allegro edges are treated as directed inputs
+- positive edge energies are ignored
+- negative edge energies become bond strengths via `abs(energy)`
+- the undirected Leiden graph weight is the sum of both directions
+
+So if `E_ij = -0.2` and `E_ji = -0.3`, the final undirected graph edge weight
+is `0.5`.
+
+`gaussian` uses the common ML-style radial form
+`exp(-d^2 / (2 sigma^2))`. You can configure it explicitly:
+
+```yaml
+graph:
+  cutoff: 3.5
+  kernel:
+    name: gaussian
+    sigma: 1.0
+```
+
+If `sigma` is omitted, it currently defaults to `cutoff / 3`.
+
+`graph.cutoff: auto` now tries to infer a cutoff in this order:
+- recorded per-frame metadata loaded from the trajectory source
+- nested source metadata such as ASE-carried `atoms.info`
+- fallback input metadata such as `input.cutoff_radius`
+
+This is still best-effort. Ordinary LAMMPS dump trajectories often do not carry
+their neighbor or pair cutoff explicitly, so some runs will still need the
+cutoff provided in config.
+
 ## Runtime Artifacts
 
 The runtime is organized around transient `FrameBundle`s. The runner streams one
@@ -204,6 +255,52 @@ analysis:
 
 Both writers support `write_batch_size` so we can trade off write frequency
 against transient in-memory buffering.
+
+## Allegro Pre-Annotation
+
+`graphcluster` can now optionally orchestrate an Allegro edge-annotation step
+before the normal clustering pipeline begins. This is meant for the workflow:
+- start from a raw trajectory that does not yet contain exported edge energies
+- run a compiled Allegro ASE calculator over those frames
+- write a new ASE trajectory containing the normal frame data plus
+  `allegro_*` edge metadata
+- continue directly into the graph clustering pipeline
+
+This is controlled through an optional top-level `allegro:` block:
+
+```yaml
+input:
+  backend: ase
+  format: lammps-dump-binary
+  trajectory: /path/to/raw_trajectory.bin
+
+graph:
+  source: allegro
+
+allegro:
+  mode: annotate_if_missing
+  compiled_model: /path/to/compiled_model.nequip.pt2
+  annotated_trajectory_path: outputs/allegro_run/allegro_edges.traj
+  device: cuda
+  raw_type_map:
+    1: Ga
+    2: Pt
+```
+
+Supported `allegro.mode` values are:
+- `disabled`
+- `require_precomputed`
+- `annotate_if_missing`
+- `annotate_always`
+- `annotate_only`
+
+Important semantics:
+- the annotation step writes a new derived ASE trajectory file; it does not
+  modify the original input trajectory in place
+- the derived file contains both the usual atomic trajectory information and
+  exported `allegro_*` edge metadata in `Atoms.info`
+- when annotation is enabled and the mode continues the run, `graphcluster`
+  automatically switches its effective input to that derived trajectory
 
 The report artifact can later be loaded without rerunning clustering:
 

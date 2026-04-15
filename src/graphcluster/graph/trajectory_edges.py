@@ -39,6 +39,7 @@ def build_trajectory_adjacency(
 
     cutoff = resolve_cutoff_radius(frame, graph_config, input_config=input_config)
     kernel_name, kernel_config = resolve_kernel_config(graph_config)
+    kernel_config = materialize_kernel_config(kernel_name, kernel_config, cutoff=cutoff)
 
     shifted_positions = positions.copy()
     box_lengths = extract_orthorhombic_box_lengths(frame)
@@ -68,7 +69,15 @@ def resolve_cutoff_radius(
     input_config: dict | None = None,
 ) -> float:
     """Resolve the distance cutoff radius to use for graph construction."""
-    _ = frame
+    return resolve_cutoff_spec(frame, graph_config, input_config=input_config)[0]
+
+
+def resolve_cutoff_spec(
+    frame: Frame,
+    graph_config: dict,
+    input_config: dict | None = None,
+) -> tuple[float, str]:
+    """Resolve the cutoff radius and record where it came from."""
     cutoff = graph_config.get("cutoff")
     if cutoff is None:
         raise ValueError(
@@ -78,17 +87,16 @@ def resolve_cutoff_radius(
     if isinstance(cutoff, str):
         if cutoff != "auto":
             raise ValueError(f"Unsupported cutoff specifier: {cutoff!r}")
-        input_config = input_config or {}
-        for key in ("cutoff_radius", "neighbor_cutoff", "pair_cutoff"):
-            value = input_config.get(key)
-            if value is not None:
-                return float(value)
+        inferred_cutoff = infer_recorded_cutoff_radius(frame, input_config=input_config)
+        if inferred_cutoff is not None:
+            return inferred_cutoff
         raise ValueError(
             "graph.cutoff was set to 'auto', but no supported input cutoff metadata "
-            "was found. Try setting graph.cutoff explicitly or providing "
+            "was found in the frame metadata or input config. Try setting "
+            "graph.cutoff explicitly or providing a recorded cutoff such as "
             "input.cutoff_radius."
         )
-    return float(cutoff)
+    return float(cutoff), "graph.cutoff"
 
 
 def resolve_kernel_config(graph_config: dict) -> tuple[str, dict]:
@@ -99,6 +107,20 @@ def resolve_kernel_config(graph_config: dict) -> tuple[str, dict]:
     if isinstance(kernel, dict):
         return str(kernel.get("name", "distance")), dict(kernel)
     raise ValueError(f"Unsupported graph.kernel value: {kernel!r}")
+
+
+def materialize_kernel_config(
+    kernel_name: str,
+    kernel_config: dict,
+    *,
+    cutoff: float,
+) -> dict:
+    """Fill in kernel defaults that depend on the resolved cutoff."""
+    resolved = dict(kernel_config)
+    resolved.setdefault("cutoff", float(cutoff))
+    if kernel_name in {"gaussian", "gaussian_distance"}:
+        resolved.setdefault("sigma", float(cutoff) / 3.0)
+    return resolved
 
 
 def extract_orthorhombic_box_lengths(frame: Frame) -> np.ndarray | None:
@@ -137,6 +159,11 @@ def compute_kernel_weights(
         return np.ones_like(distances, dtype=float)
     if kernel_name == "distance":
         return distances.astype(float)
+    if kernel_name in {"gaussian", "gaussian_distance"}:
+        sigma = float(kernel_config["sigma"])
+        if sigma <= 0:
+            raise ValueError("Gaussian graph kernel requires sigma > 0.")
+        return np.exp(-(distances**2) / (2.0 * sigma**2))
     if kernel_name == "inverse_distance":
         epsilon = float(kernel_config.get("epsilon", 1.0e-12))
         return 1.0 / np.maximum(distances, epsilon)
@@ -149,5 +176,73 @@ def compute_kernel_weights(
     raise ValueError(
         "Unsupported graph kernel "
         f"{kernel_name!r}. Supported kernels are binary, distance, "
-        "inverse_distance, and smooth_inverse_distance."
+        "gaussian, inverse_distance, and smooth_inverse_distance."
     )
+
+
+def infer_recorded_cutoff_radius(
+    frame: Frame,
+    input_config: dict | None = None,
+) -> tuple[float, str] | None:
+    """Best-effort cutoff inference from recorded frame metadata or input config."""
+    frame_match = find_first_metadata_value(frame.metadata, CUTOFF_METADATA_KEYS)
+    if frame_match is not None:
+        path, value = frame_match
+        return float(value), f"frame.metadata.{path}"
+
+    input_config = input_config or {}
+    input_match = find_first_metadata_value(input_config, CUTOFF_METADATA_KEYS)
+    if input_match is not None:
+        path, value = input_match
+        return float(value), f"input.{path}"
+    return None
+
+
+def find_first_metadata_value(
+    metadata: dict | None,
+    keys: tuple[str, ...],
+    *,
+    prefix: str = "",
+) -> tuple[str, float] | None:
+    """Recursively find the first numeric metadata value whose key matches."""
+    if not isinstance(metadata, dict):
+        return None
+
+    for key in keys:
+        value = metadata.get(key)
+        numeric_value = coerce_positive_float(value)
+        if numeric_value is not None:
+            return f"{prefix}{key}", numeric_value
+
+    for key, value in metadata.items():
+        if not isinstance(value, dict):
+            continue
+        match = find_first_metadata_value(value, keys, prefix=f"{prefix}{key}.")
+        if match is not None:
+            return match
+    return None
+
+
+def coerce_positive_float(value: object) -> float | None:
+    """Return a positive float when the value looks like one, else ``None``."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric_value <= 0:
+        return None
+    return numeric_value
+
+
+CUTOFF_METADATA_KEYS = (
+    "cutoff",
+    "cutoff_radius",
+    "neighbor_cutoff",
+    "pair_cutoff",
+    "edge_cutoff",
+    "rcut",
+    "r_cut",
+    "r_max",
+)

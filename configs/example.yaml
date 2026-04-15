@@ -2,6 +2,7 @@ input:
   format: lammps
   topology: path/to/topology.data
   trajectory: path/to/trajectory.dump
+  cutoff_radius: 3.5
 
 frames:
   start: 0
@@ -11,8 +12,10 @@ frames:
 graph:
   source: trajectory
   mode: cutoff_distance
-  cutoff: 3.5
-  kernel: binary
+  cutoff: auto
+  kernel:
+    name: gaussian
+    sigma: 1.0
   directed: false
 
 partition:

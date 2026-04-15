@@ -114,3 +114,122 @@ class ClusterLifecycleReport:
     def get_cluster_lifetimes(self) -> list[dict[str, Any]]:
         """Return simple tracked-cluster lifetime records."""
         return list(self.cluster_lifetimes)
+
+    def get_summary_table(self) -> dict[str, Any]:
+        """Return the headline run summary as a plain dictionary."""
+        return dict(self.summary)
+
+    def get_event_counts(self) -> dict[str, int]:
+        """Return total birth/death/split/merge counts from the summary."""
+        return {
+            "total_births": int(self.summary.get("total_births", 0)),
+            "total_deaths": int(self.summary.get("total_deaths", 0)),
+            "total_splits": int(self.summary.get("total_splits", 0)),
+            "total_merges": int(self.summary.get("total_merges", 0)),
+        }
+
+    def get_top_atoms_by_switches(
+        self,
+        n: int = 10,
+        *,
+        min_switches: int = 1,
+    ) -> list[dict[str, int]]:
+        """Return the atoms that changed tracked cluster most frequently."""
+        records = [
+            {"atom_index": atom_index, "switch_count": int(switch_count)}
+            for atom_index, switch_count in enumerate(self.atom_switch_counts)
+            if int(switch_count) >= min_switches
+        ]
+        records.sort(key=lambda record: (-record["switch_count"], record["atom_index"]))
+        return records[: max(int(n), 0)]
+
+    def get_num_active_atoms(self, *, min_switches: int = 1) -> int:
+        """Return the number of atoms whose tracked label changed enough times."""
+        return sum(int(count) >= min_switches for count in self.atom_switch_counts)
+
+    def get_cluster_lifetimes_sorted(
+        self,
+        *,
+        descending: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Return lifetime records sorted by frames observed."""
+        return sorted(
+            self.cluster_lifetimes,
+            key=lambda record: (int(record.get("frames_observed", 0)), -int(record.get("cluster_id", 0))),
+            reverse=descending,
+        )
+
+    def get_longest_lived_clusters(self, n: int = 10) -> list[dict[str, Any]]:
+        """Return the longest-lived tracked clusters."""
+        return self.get_cluster_lifetimes_sorted(descending=True)[: max(int(n), 0)]
+
+    def plot_cluster_count_timeseries(self, *, figsize: tuple[float, float] = (8, 6)):
+        """Plot tracked-cluster count and atom-change activity versus frame."""
+        plt = _import_matplotlib_pyplot()
+        frame_counts = self.get_frame_cluster_counts()
+        frame_indices = [record["frame_index"] for record in frame_counts]
+        num_clusters = [record["num_clusters"] for record in frame_counts]
+        num_changed_atoms = [record["num_changed_atoms"] for record in frame_counts]
+
+        fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+        axes[0].plot(frame_indices, num_clusters, marker="o")
+        axes[0].set_ylabel("Tracked clusters")
+        axes[0].set_title("Clusters per frame")
+
+        axes[1].plot(frame_indices, num_changed_atoms, marker="o", color="tab:orange")
+        axes[1].set_xlabel("Frame index")
+        axes[1].set_ylabel("Atoms changing cluster")
+        axes[1].set_title("Per-frame cluster-change activity")
+
+        fig.tight_layout()
+        return fig, axes
+
+    def plot_atom_switch_histogram(self, *, figsize: tuple[float, float] = (7, 4)):
+        """Plot the distribution of tracked-cluster changes per atom."""
+        plt = _import_matplotlib_pyplot()
+        atom_switch_counts = self.get_atom_switch_counts()
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.hist(
+            atom_switch_counts,
+            bins=_integer_histogram_bins(atom_switch_counts, minimum_left_edge=0),
+            align="left",
+            rwidth=0.9,
+        )
+        ax.set_xlabel("Tracked-cluster changes per atom")
+        ax.set_ylabel("Number of atoms")
+        ax.set_title("Atom activity histogram")
+        return fig, ax
+
+    def plot_cluster_lifetime_histogram(self, *, figsize: tuple[float, float] = (7, 4)):
+        """Plot the distribution of tracked-cluster lifetimes."""
+        plt = _import_matplotlib_pyplot()
+        lifetime_lengths = [
+            int(record.get("frames_observed", 0))
+            for record in self.get_cluster_lifetimes_sorted(descending=True)
+        ]
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.hist(
+            lifetime_lengths,
+            bins=_integer_histogram_bins(lifetime_lengths, minimum_left_edge=1),
+            align="left",
+            rwidth=0.9,
+        )
+        ax.set_xlabel("Frames observed")
+        ax.set_ylabel("Number of tracked clusters")
+        ax.set_title("Tracked-cluster lifetime histogram")
+        return fig, ax
+
+
+def _import_matplotlib_pyplot():
+    """Import matplotlib lazily so reports remain cheap to load."""
+    import matplotlib.pyplot as plt
+
+    return plt
+
+
+def _integer_histogram_bins(values: list[int], *, minimum_left_edge: int) -> list[int]:
+    """Build inclusive histogram bins for small integer-valued summaries."""
+    if not values:
+        return [minimum_left_edge, minimum_left_edge + 1]
+    upper = max(max(int(value) for value in values) + 2, minimum_left_edge + 2)
+    return list(range(minimum_left_edge, upper))
