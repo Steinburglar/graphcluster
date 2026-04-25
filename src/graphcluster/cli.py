@@ -24,6 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the initial CLI parser."""
     parser = argparse.ArgumentParser(description="Run graph clustering on an MD trajectory.")
     parser.add_argument("config", help="Path to the YAML config file for the run.")
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Emit startup and runtime timing summaries for the run.",
+    )
     return parser
 
 
@@ -32,4 +37,4 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     runner = TrajectoryPartitionRunner.from_config_path(args.config)
-    runner.run(progress=True)
+    runner.run(progress=True, profile=args.profile)

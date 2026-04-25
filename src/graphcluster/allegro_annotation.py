@@ -136,7 +136,7 @@ def run_allegro_annotation(
         )
 
     try:
-        from allegro_ase_edge_export import annotate_trajectory
+        from allegro_ase_edge_export.annotate_trajectory import annotate_trajectory
     except ImportError as exc:
         raise ImportError(
             "Allegro annotation requested, but the optional "

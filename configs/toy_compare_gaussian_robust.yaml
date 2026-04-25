@@ -38,7 +38,7 @@ visualization:
 analysis:
   enabled: true
   write_batch_size: 1
-  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_compare_gaussian_robust/cluster_lifecycle_report.jsonl
+  output_path: /n/home12/lsteinberger/graphcluster/outputs/toy_compare_gaussian_robust/cluster_lifecycle_report.json
 
 output:
   directory: /n/home12/lsteinberger/graphcluster/outputs/toy_compare_gaussian_robust
