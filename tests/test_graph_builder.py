@@ -79,6 +79,27 @@ def test_graph_builder_sums_directed_allegro_edge_energies_into_symmetric_weight
     assert graph.adjacency[0, 2] == pytest.approx(0.0)
 
 
+def test_graph_builder_can_use_scaled_allegro_edge_energies() -> None:
+    builder = GraphBuilder.from_config(
+        {"graph": {"source": "allegro", "energy_field": "scaled"}}
+    )
+    graph = builder.build(
+        Frame(
+            index=0,
+            positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            atom_types=["Ga", "Pt"],
+            metadata={
+                "ase_info": {
+                    "allegro_edge_indices": [[0, 1], [1, 0]],
+                    "allegro_edge_raw_energies": [-100.0, -100.0],
+                    "allegro_edge_scaled_energies": [-0.2, -0.3],
+                }
+            },
+        )
+    )
+    assert graph.adjacency[0, 1] == pytest.approx(0.5)
+
+
 def test_graph_builder_ignores_positive_and_self_allegro_edges() -> None:
     builder = GraphBuilder.from_config({"graph": {"source": "allegro"}})
     graph = builder.build(

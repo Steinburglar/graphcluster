@@ -40,7 +40,32 @@ class GraphBuilder:
     @classmethod
     def from_config(cls, config: dict) -> "GraphBuilder":
         """Build a graph builder from config."""
-        return cls(config=config)
+        if "edges" in config:
+            return cls(config=config)
+        graph_config = dict(config.get("graph") or {})
+        if not graph_config:
+            return cls(config=config)
+        normalized = dict(config)
+        edges_config = dict(graph_config)
+        source = edges_config.pop("source", None)
+        if source == "allegro":
+            edges_config["kind"] = "allegro"
+        elif source is not None:
+            edges_config["kind"] = str(source)
+        if "kernel" in edges_config:
+            kernel = edges_config.pop("kernel")
+            if isinstance(kernel, dict):
+                edges_config.update(kernel)
+                edges_config["kind"] = str(kernel.get("name", "distance"))
+                edges_config.pop("name", None)
+            else:
+                edges_config["kind"] = kernel
+        normalized["edges"] = edges_config
+        if "input" in normalized and "source" not in normalized:
+            source_config = dict(normalized["input"])
+            source_config["_cutoff_source_prefix"] = "input"
+            normalized["source"] = source_config
+        return cls(config=normalized)
 
     def build(self, frame: Frame) -> SparseWeightedGraph:
         """Create the canonical graph object for a frame."""

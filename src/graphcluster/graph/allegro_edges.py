@@ -7,7 +7,7 @@ than trying to reproduce Allegro graph semantics from geometry alone.
 
 Current expected source:
 - an ASE-readable trajectory whose ``Atoms.info`` contains the exported keys
-  written by the separate ``allegro_ase_edge_export`` package
+  written by the separate ``allegro_annotate`` package
 
 Current weight semantics:
 - Allegro edge energies are directed
@@ -30,6 +30,8 @@ from scipy import sparse
 from ..io.frame import Frame
 
 EDGE_ENERGIES_INFO_KEY = "allegro_edge_energies"
+EDGE_RAW_ENERGIES_INFO_KEY = "allegro_edge_raw_energies"
+EDGE_SCALED_ENERGIES_INFO_KEY = "allegro_edge_scaled_energies"
 EDGE_INDICES_INFO_KEY = "allegro_edge_indices"
 
 
@@ -43,7 +45,8 @@ def build_allegro_adjacency(frame: Frame, edges_config: dict) -> sparse.csr_matr
 
     ase_info = extract_allegro_metadata(frame)
     edge_index = np.asarray(ase_info[EDGE_INDICES_INFO_KEY], dtype=int)
-    edge_energy = np.asarray(ase_info[EDGE_ENERGIES_INFO_KEY], dtype=float).reshape(-1)
+    edge_energy_key = resolve_edge_energy_key(ase_info, edges_config)
+    edge_energy = np.asarray(ase_info[edge_energy_key], dtype=float).reshape(-1)
 
     edge_index = normalize_edge_index(edge_index)
     validate_edge_payload(edge_index=edge_index, edge_energy=edge_energy, num_nodes=num_nodes)
@@ -75,19 +78,55 @@ def build_allegro_adjacency(frame: Frame, edges_config: dict) -> sparse.csr_matr
 def extract_allegro_metadata(frame: Frame) -> dict:
     """Return the metadata dict that should contain exported Allegro edge arrays."""
     metadata = frame.metadata or {}
-    if EDGE_INDICES_INFO_KEY in metadata and EDGE_ENERGIES_INFO_KEY in metadata:
+    if EDGE_INDICES_INFO_KEY in metadata and _has_any_edge_energy(metadata):
         return metadata
 
     ase_info = metadata.get("ase_info")
     if isinstance(ase_info, dict):
-        if EDGE_INDICES_INFO_KEY in ase_info and EDGE_ENERGIES_INFO_KEY in ase_info:
+        if EDGE_INDICES_INFO_KEY in ase_info and _has_any_edge_energy(ase_info):
             return ase_info
 
     raise ValueError(
         "edges.kind='allegro' requires source.path to be an Allegro-annotated "
         "trajectory with exported edge metadata. "
-        f"Expected {EDGE_INDICES_INFO_KEY!r} and {EDGE_ENERGIES_INFO_KEY!r} in "
+        f"Expected {EDGE_INDICES_INFO_KEY!r} and an Allegro edge energy field in "
         "frame.metadata or frame.metadata['ase_info']."
+    )
+
+
+def _has_any_edge_energy(metadata: dict) -> bool:
+    return any(
+        key in metadata
+        for key in (
+            EDGE_RAW_ENERGIES_INFO_KEY,
+            EDGE_SCALED_ENERGIES_INFO_KEY,
+            EDGE_ENERGIES_INFO_KEY,
+        )
+    )
+
+
+def resolve_edge_energy_key(ase_info: dict, edges_config: dict) -> str:
+    """Return selected Allegro edge-energy info key."""
+    energy_field = str(edges_config.get("energy_field", "raw"))
+    if energy_field == "raw":
+        if EDGE_RAW_ENERGIES_INFO_KEY in ase_info:
+            return EDGE_RAW_ENERGIES_INFO_KEY
+        if EDGE_ENERGIES_INFO_KEY in ase_info:
+            return EDGE_ENERGIES_INFO_KEY
+        raise ValueError(
+            "edges.energy_field='raw' requires "
+            f"{EDGE_RAW_ENERGIES_INFO_KEY!r} or legacy {EDGE_ENERGIES_INFO_KEY!r}."
+        )
+    if energy_field == "scaled":
+        if EDGE_SCALED_ENERGIES_INFO_KEY in ase_info:
+            return EDGE_SCALED_ENERGIES_INFO_KEY
+        raise ValueError(
+            "edges.energy_field='scaled' requires "
+            f"{EDGE_SCALED_ENERGIES_INFO_KEY!r} in Allegro-annotated frame metadata."
+        )
+    raise ValueError(
+        "Unsupported edges.energy_field "
+        f"{energy_field!r}. Supported values are ['raw', 'scaled']."
     )
 
 

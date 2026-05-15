@@ -191,7 +191,8 @@ def infer_recorded_cutoff_radius(
     source_match = find_first_metadata_value(source_config, CUTOFF_METADATA_KEYS)
     if source_match is not None:
         path, value = source_match
-        return float(value), f"source.{path}"
+        source_prefix = str(source_config.get("_cutoff_source_prefix", "source"))
+        return float(value), f"{source_prefix}.{path}"
     return None
 
 

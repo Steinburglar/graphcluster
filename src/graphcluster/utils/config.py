@@ -65,6 +65,7 @@ def normalize_config(data: dict, *, config_path: str | Path | None = None) -> di
             "sigma": edges.get("sigma"),
             "epsilon": edges.get("epsilon"),
             "energy_to_weight": str(edges.get("energy_to_weight", "abs_negative_sum")),
+            "energy_field": str(edges.get("energy_field", "raw")),
         },
         "partition": dict(data.get("partition") or {}),
         "tracking": dict(data.get("tracking") or {}),

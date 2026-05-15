@@ -104,14 +104,12 @@ python -m pip install -e '.[dev,vis]'
 This install path does three useful things:
 - it reads the dependency metadata from `pyproject.toml`
 - it installs the package in editable mode so local source edits are picked up
-- it exposes the console scripts `graphcluster`, `annotate-allegro`, and
-  `graphcluster-view-ase`
+- it exposes the console scripts `graphcluster` and `graphcluster-view-ase`
 
 You can verify the environment with:
 
 ```bash
 which python
-which annotate-allegro
 which graphcluster
 which graphcluster-view-ase
 python -c "import graphcluster, ase, scipy, yaml, matplotlib; print('graphcluster environment ok')"
@@ -193,7 +191,12 @@ The graph builder supports Allegro-derived edges through the `edges` block:
 
 For the current Allegro path, the expected ASE metadata keys are:
 - `allegro_edge_indices`
-- `allegro_edge_energies`
+- `allegro_edge_raw_energies` or legacy `allegro_edge_energies`
+- `allegro_edge_scaled_energies` when you choose scaled edge energies
+
+Choose edge-energy semantics with `edges.energy_field`:
+- `raw` uses Allegro raw pre-scale edge readouts; this is the default
+- `scaled` uses per-source-atom normalized and scaled edge contributions
 
 Current Allegro-to-graph semantics are intentionally simple:
 - exported Allegro edges are treated as directed inputs
@@ -265,7 +268,7 @@ Allegro annotation is intentionally separate from clustering. First create an
 annotated ASE trajectory:
 
 ```bash
-annotate-allegro \
+allegro-annotate-trajectory \
   --input /path/to/raw.xyz \
   --input-format xyz \
   --compiled-model /path/to/model.nequip.pt2 \
@@ -284,6 +287,7 @@ source:
 
 edges:
   kind: allegro
+  energy_field: raw
   energy_to_weight: abs_negative_sum
 ```
 
@@ -291,7 +295,7 @@ Important semantics:
 - `graphcluster` reads exactly one trajectory from `source.path`
 - `graphcluster` never modifies input and never switches files mid-run
 - `edges.kind: allegro` requires `source.path` to already contain
-  `allegro_edge_indices` and `allegro_edge_energies`
+  `allegro_edge_indices` and the selected edge-energy field
 
 The report artifact can later be loaded without rerunning clustering:
 

@@ -1,5 +1,5 @@
 # Example config for consuming a trajectory that has already been annotated
-# with Allegro edge energies by the separate allegro_ase_edge_export package.
+# with Allegro edge energies by the separate allegro_annotate package.
 
 input:
   backend: ase
