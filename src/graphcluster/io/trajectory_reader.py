@@ -43,7 +43,7 @@ class TrajectoryReader:
     stride: int = 1
     format: str | None = None
     backend: str | None = None
-    input_config: dict | None = None
+    source_config: dict | None = None
     _source: Iterable[Frame] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -60,26 +60,26 @@ class TrajectoryReader:
                 stop=self.stop,
                 stride=self.stride,
                 format=self.format,
-                input_config=self.input_config,
+                source_config=self.source_config,
             )
         raise ValueError(f"Unsupported trajectory backend: {self.backend}")
 
     @classmethod
     def from_config(cls, config: dict) -> "TrajectoryReader":
         """Build a reader from config."""
-        frames = config.get("frames", {})
-        input_config = config.get("input", {})
-        trajectory_path = input_config.get("trajectory")
+        selection = config.get("selection", {})
+        source_config = config.get("source", {})
+        trajectory_path = source_config.get("path")
         if not trajectory_path:
-            raise ValueError("TrajectoryReader requires input.trajectory in the config.")
+            raise ValueError("TrajectoryReader requires source.path in the config.")
         return cls(
             trajectory_path=str(trajectory_path),
-            start=frames.get("start", 0),
-            stop=frames.get("stop"),
-            stride=frames.get("stride", 1),
-            format=input_config.get("format"),
-            backend=input_config.get("backend"),
-            input_config=input_config,
+            start=selection.get("start", 0),
+            stop=selection.get("stop"),
+            stride=selection.get("stride", 1),
+            format=source_config.get("format"),
+            backend=source_config.get("backend"),
+            source_config=source_config,
         )
 
     @property

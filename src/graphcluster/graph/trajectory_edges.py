@@ -26,8 +26,8 @@ from ..io.frame import Frame
 
 def build_trajectory_adjacency(
     frame: Frame,
-    graph_config: dict,
-    input_config: dict | None = None,
+    edges_config: dict,
+    source_config: dict | None = None,
 ) -> sparse.csr_matrix:
     """Build a cutoff-based sparse weighted adjacency matrix for one frame."""
     positions = np.asarray(frame.positions, dtype=float)
@@ -37,8 +37,8 @@ def build_trajectory_adjacency(
     if num_nodes == 1:
         return sparse.csr_matrix((1, 1), dtype=float)
 
-    cutoff = resolve_cutoff_radius(frame, graph_config, input_config=input_config)
-    kernel_name, kernel_config = resolve_kernel_config(graph_config)
+    cutoff = resolve_cutoff_radius(frame, edges_config, source_config=source_config)
+    kernel_name, kernel_config = resolve_kernel_config(edges_config)
     kernel_config = materialize_kernel_config(kernel_name, kernel_config, cutoff=cutoff)
 
     shifted_positions = positions.copy()
@@ -65,48 +65,45 @@ def build_trajectory_adjacency(
 
 def resolve_cutoff_radius(
     frame: Frame,
-    graph_config: dict,
-    input_config: dict | None = None,
+    edges_config: dict,
+    source_config: dict | None = None,
 ) -> float:
     """Resolve the distance cutoff radius to use for graph construction."""
-    return resolve_cutoff_spec(frame, graph_config, input_config=input_config)[0]
+    return resolve_cutoff_spec(frame, edges_config, source_config=source_config)[0]
 
 
 def resolve_cutoff_spec(
     frame: Frame,
-    graph_config: dict,
-    input_config: dict | None = None,
+    edges_config: dict,
+    source_config: dict | None = None,
 ) -> tuple[float, str]:
     """Resolve the cutoff radius and record where it came from."""
-    cutoff = graph_config.get("cutoff")
+    cutoff = edges_config.get("cutoff")
     if cutoff is None:
         raise ValueError(
-            "Trajectory graph construction requires graph.cutoff to be set, or "
-            "graph.cutoff: auto with an input cutoff source available."
+            "Geometry-based edge construction requires edges.cutoff to be set, or "
+            "edges.cutoff: auto with a source cutoff available."
         )
     if isinstance(cutoff, str):
         if cutoff != "auto":
             raise ValueError(f"Unsupported cutoff specifier: {cutoff!r}")
-        inferred_cutoff = infer_recorded_cutoff_radius(frame, input_config=input_config)
+        inferred_cutoff = infer_recorded_cutoff_radius(frame, source_config=source_config)
         if inferred_cutoff is not None:
             return inferred_cutoff
         raise ValueError(
-            "graph.cutoff was set to 'auto', but no supported input cutoff metadata "
-            "was found in the frame metadata or input config. Try setting "
-            "graph.cutoff explicitly or providing a recorded cutoff such as "
-            "input.cutoff_radius."
+            "edges.cutoff was set to 'auto', but no supported source cutoff metadata "
+            "was found in the frame metadata or source config. Try setting "
+            "edges.cutoff explicitly or providing a recorded cutoff such as "
+            "source.cutoff_radius."
         )
-    return float(cutoff), "graph.cutoff"
+    return float(cutoff), "edges.cutoff"
 
 
-def resolve_kernel_config(graph_config: dict) -> tuple[str, dict]:
-    """Resolve the configured edge-weight kernel name and parameters."""
-    kernel = graph_config.get("kernel", "distance")
-    if isinstance(kernel, str):
-        return kernel, {}
-    if isinstance(kernel, dict):
-        return str(kernel.get("name", "distance")), dict(kernel)
-    raise ValueError(f"Unsupported graph.kernel value: {kernel!r}")
+def resolve_kernel_config(edges_config: dict) -> tuple[str, dict]:
+    """Resolve the configured geometry edge-weight kernel and parameters."""
+    kernel_name = str(edges_config.get("kind", "distance"))
+    kernel_config = dict(edges_config)
+    return kernel_name, kernel_config
 
 
 def materialize_kernel_config(
@@ -182,19 +179,19 @@ def compute_kernel_weights(
 
 def infer_recorded_cutoff_radius(
     frame: Frame,
-    input_config: dict | None = None,
+    source_config: dict | None = None,
 ) -> tuple[float, str] | None:
-    """Best-effort cutoff inference from recorded frame metadata or input config."""
+    """Best-effort cutoff inference from recorded frame metadata or source config."""
     frame_match = find_first_metadata_value(frame.metadata, CUTOFF_METADATA_KEYS)
     if frame_match is not None:
         path, value = frame_match
         return float(value), f"frame.metadata.{path}"
 
-    input_config = input_config or {}
-    input_match = find_first_metadata_value(input_config, CUTOFF_METADATA_KEYS)
-    if input_match is not None:
-        path, value = input_match
-        return float(value), f"input.{path}"
+    source_config = source_config or {}
+    source_match = find_first_metadata_value(source_config, CUTOFF_METADATA_KEYS)
+    if source_match is not None:
+        path, value = source_match
+        return float(value), f"source.{path}"
     return None
 
 

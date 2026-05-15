@@ -33,9 +33,8 @@ EDGE_ENERGIES_INFO_KEY = "allegro_edge_energies"
 EDGE_INDICES_INFO_KEY = "allegro_edge_indices"
 
 
-def build_allegro_adjacency(frame: Frame, graph_config: dict) -> sparse.csr_matrix:
+def build_allegro_adjacency(frame: Frame, edges_config: dict) -> sparse.csr_matrix:
     """Build a symmetric sparse adjacency from exported Allegro edge metadata."""
-    _ = graph_config
     num_nodes = len(frame.positions)
     if num_nodes == 0:
         return sparse.csr_matrix((0, 0), dtype=float)
@@ -52,6 +51,7 @@ def build_allegro_adjacency(frame: Frame, graph_config: dict) -> sparse.csr_matr
     undirected_weights = combine_directed_edge_energies(
         edge_index=edge_index,
         edge_energy=edge_energy,
+        energy_to_weight=str(edges_config.get("energy_to_weight", "abs_negative_sum")),
     )
     if not undirected_weights:
         return sparse.csr_matrix((num_nodes, num_nodes), dtype=float)
@@ -84,7 +84,8 @@ def extract_allegro_metadata(frame: Frame) -> dict:
             return ase_info
 
     raise ValueError(
-        "graph.source='allegro' requires exported edge metadata in the input frame. "
+        "edges.kind='allegro' requires source.path to be an Allegro-annotated "
+        "trajectory with exported edge metadata. "
         f"Expected {EDGE_INDICES_INFO_KEY!r} and {EDGE_ENERGIES_INFO_KEY!r} in "
         "frame.metadata or frame.metadata['ase_info']."
     )
@@ -134,6 +135,7 @@ def combine_directed_edge_energies(
     *,
     edge_index: np.ndarray,
     edge_energy: np.ndarray,
+    energy_to_weight: str,
 ) -> dict[tuple[int, int], float]:
     """Collapse directed edge energies into undirected bond strengths.
 
@@ -144,8 +146,21 @@ def combine_directed_edge_energies(
     """
     undirected_weights: dict[tuple[int, int], float] = defaultdict(float)
     for (source, target), energy in zip(edge_index, edge_energy, strict=True):
-        if source == target or energy >= 0:
+        if source == target:
+            continue
+        contribution = convert_energy_to_weight(float(energy), energy_to_weight)
+        if contribution <= 0:
             continue
         pair = tuple(sorted((int(source), int(target))))
-        undirected_weights[pair] += abs(float(energy))
+        undirected_weights[pair] += contribution
     return dict(undirected_weights)
+
+
+def convert_energy_to_weight(energy: float, energy_to_weight: str) -> float:
+    """Convert one directed Allegro edge energy into a nonnegative graph weight."""
+    if energy_to_weight == "abs_negative_sum":
+        return abs(energy) if energy < 0 else 0.0
+    raise ValueError(
+        "Unsupported edges.energy_to_weight "
+        f"{energy_to_weight!r}. Supported values are ['abs_negative_sum']."
+    )

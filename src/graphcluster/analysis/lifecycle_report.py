@@ -107,6 +107,76 @@ class ClusterLifecycleReport:
             for record in self.frame_records
         ]
 
+    def has_cluster_energy(self) -> bool:
+        """Return whether any frame record contains cluster energy summaries."""
+        return any("cluster_energy" in record for record in self.frame_records)
+
+    def get_frame_cluster_energies(self) -> list[dict[str, Any]]:
+        """Return frame-local cluster energy summaries when present."""
+        return [
+            {
+                "frame_index": record["frame_index"],
+                "cluster_energy": _normalize_frame_cluster_energy_record(record["cluster_energy"]),
+            }
+            for record in self.frame_records
+            if "cluster_energy" in record
+        ]
+
+    def get_cluster_energy_timeseries(self, cluster_id: int) -> list[dict[str, Any]]:
+        """Return raw pre-energy and reconstructed model-energy data for one cluster."""
+        series: list[dict[str, Any]] = []
+        for record in self.frame_records:
+            cluster_energy = record.get("cluster_energy")
+            if not isinstance(cluster_energy, dict):
+                continue
+            normalized_frame_record = _normalize_frame_cluster_energy_record(cluster_energy)
+            for cluster_record in normalized_frame_record.get("clusters", []):
+                normalized_record = _normalize_cluster_energy_record(cluster_record)
+                if int(normalized_record.get("cluster_id", -1)) != int(cluster_id):
+                    continue
+                series.append(
+                    {
+                        "frame_index": record["frame_index"],
+                        "cluster_id": int(normalized_record["cluster_id"]),
+                        "size": int(normalized_record.get("size", 0)),
+                        "internal_energy": float(normalized_record.get("internal_energy", 0.0)),
+                        "external_energy": float(normalized_record.get("external_energy", 0.0)),
+                        "combined_energy": float(normalized_record.get("combined_energy", 0.0)),
+                        "internal_energy_per_atom": float(
+                            normalized_record.get("internal_energy_per_atom", 0.0)
+                        ),
+                        "external_energy_per_atom": float(
+                            normalized_record.get("external_energy_per_atom", 0.0)
+                        ),
+                        "combined_energy_per_atom": float(
+                            normalized_record.get("combined_energy_per_atom", 0.0)
+                        ),
+                        "internal_model_energy": float(
+                            normalized_record.get("internal_model_energy", 0.0)
+                        ),
+                        "external_model_energy": float(
+                            normalized_record.get("external_model_energy", 0.0)
+                        ),
+                        "shift_energy": float(normalized_record.get("shift_energy", 0.0)),
+                        "combined_model_energy": float(
+                            normalized_record.get("combined_model_energy", 0.0)
+                        ),
+                        "internal_model_energy_per_atom": float(
+                            normalized_record.get("internal_model_energy_per_atom", 0.0)
+                        ),
+                        "external_model_energy_per_atom": float(
+                            normalized_record.get("external_model_energy_per_atom", 0.0)
+                        ),
+                        "shift_energy_per_atom": float(
+                            normalized_record.get("shift_energy_per_atom", 0.0)
+                        ),
+                        "combined_model_energy_per_atom": float(
+                            normalized_record.get("combined_model_energy_per_atom", 0.0)
+                        ),
+                    }
+                )
+        return series
+
     def get_atom_switch_counts(self) -> list[int]:
         """Return the number of tracked-cluster changes per atom."""
         return list(self.atom_switch_counts)
@@ -219,6 +289,56 @@ class ClusterLifecycleReport:
         ax.set_title("Tracked-cluster lifetime histogram")
         return fig, ax
 
+    def plot_cluster_energy_timeseries(
+        self,
+        cluster_id: int,
+        *,
+        components: tuple[str, ...] = ("internal_energy", "external_energy", "combined_energy"),
+        figsize: tuple[float, float] = (8, 8),
+    ):
+        """Plot raw pre-energy or reconstructed model-energy fields versus frame."""
+        plt = _import_matplotlib_pyplot()
+        series = self.get_cluster_energy_timeseries(cluster_id)
+        if not series:
+            raise ValueError(
+                f"No cluster energy records were found for tracked cluster {cluster_id}."
+            )
+
+        valid_components = {
+            "internal_energy",
+            "external_energy",
+            "combined_energy",
+            "internal_energy_per_atom",
+            "external_energy_per_atom",
+            "combined_energy_per_atom",
+            "internal_model_energy",
+            "external_model_energy",
+            "shift_energy",
+            "combined_model_energy",
+            "internal_model_energy_per_atom",
+            "external_model_energy_per_atom",
+            "shift_energy_per_atom",
+            "combined_model_energy_per_atom",
+        }
+        unknown_components = [component for component in components if component not in valid_components]
+        if unknown_components:
+            raise ValueError(
+                "Unsupported cluster energy component(s) "
+                f"{unknown_components!r}. Supported values are {sorted(valid_components)}."
+            )
+
+        frame_indices = [record["frame_index"] for record in series]
+        fig, axes = plt.subplots(len(components), 1, figsize=figsize, sharex=True)
+        if len(components) == 1:
+            axes = [axes]
+        for axis, component in zip(axes, components, strict=True):
+            axis.plot(frame_indices, [record[component] for record in series], marker="o")
+            axis.set_ylabel(component)
+            axis.set_title(f"Tracked cluster {cluster_id} {component}")
+        axes[-1].set_xlabel("Frame index")
+        fig.tight_layout()
+        return fig, axes
+
 
 def _import_matplotlib_pyplot():
     """Import matplotlib lazily so reports remain cheap to load."""
@@ -233,3 +353,88 @@ def _integer_histogram_bins(values: list[int], *, minimum_left_edge: int) -> lis
         return [minimum_left_edge, minimum_left_edge + 1]
     upper = max(max(int(value) for value in values) + 2, minimum_left_edge + 2)
     return list(range(minimum_left_edge, upper))
+
+
+def _normalize_cluster_energy_record(cluster_record: dict[str, Any]) -> dict[str, Any]:
+    """Return cluster energy record with per-atom fields filled in.
+
+    Older artifacts may only contain total energies plus size. Compute
+    per-atom values lazily here so notebooks can read both old and new reports.
+    """
+    normalized = dict(cluster_record)
+    size = int(normalized.get("size", 0))
+    if size <= 0:
+        normalized.setdefault("internal_energy_per_atom", 0.0)
+        normalized.setdefault("external_energy_per_atom", 0.0)
+        normalized.setdefault("combined_energy_per_atom", 0.0)
+        return normalized
+
+    size_float = float(size)
+    internal_energy = float(normalized.get("internal_energy", 0.0))
+    external_energy = float(normalized.get("external_energy", 0.0))
+    combined_energy = float(normalized.get("combined_energy", internal_energy + external_energy))
+    normalized.setdefault("combined_energy", combined_energy)
+    normalized.setdefault("internal_energy_per_atom", internal_energy / size_float)
+    normalized.setdefault("external_energy_per_atom", external_energy / size_float)
+    normalized.setdefault("combined_energy_per_atom", combined_energy / size_float)
+    return normalized
+
+
+def _normalize_frame_cluster_energy_record(cluster_energy: dict[str, Any]) -> dict[str, Any]:
+    """Normalize frame-local cluster energy record, merging reconstruction if present."""
+    normalized = dict(cluster_energy)
+    raw_clusters = [
+        _normalize_cluster_energy_record(cluster_record)
+        for cluster_record in cluster_energy.get("clusters", [])
+    ]
+
+    reconstruction = cluster_energy.get("model_energy_reconstruction")
+    reconstructed_by_cluster: dict[int, dict[str, Any]] = {}
+    if isinstance(reconstruction, dict):
+        for cluster_record in reconstruction.get("clusters", []):
+            normalized_record = _normalize_cluster_model_energy_record(cluster_record)
+            reconstructed_by_cluster[int(normalized_record["cluster_id"])] = normalized_record
+
+    merged_clusters: list[dict[str, Any]] = []
+    for raw_cluster_record in raw_clusters:
+        cluster_id = int(raw_cluster_record["cluster_id"])
+        merged_clusters.append(
+            {
+                **raw_cluster_record,
+                **reconstructed_by_cluster.get(cluster_id, {}),
+            }
+        )
+    normalized["clusters"] = merged_clusters
+    return normalized
+
+
+def _normalize_cluster_model_energy_record(cluster_record: dict[str, Any]) -> dict[str, Any]:
+    """Return reconstructed model-energy record with per-atom fields filled in."""
+    normalized = dict(cluster_record)
+    size = int(normalized.get("size", 0))
+    if size <= 0:
+        for field_name in (
+            "internal_model_energy_per_atom",
+            "external_model_energy_per_atom",
+            "shift_energy_per_atom",
+            "combined_model_energy_per_atom",
+        ):
+            normalized.setdefault(field_name, 0.0)
+        return normalized
+
+    size_float = float(size)
+    internal_model_energy = float(normalized.get("internal_model_energy", 0.0))
+    external_model_energy = float(normalized.get("external_model_energy", 0.0))
+    shift_energy = float(normalized.get("shift_energy", 0.0))
+    combined_model_energy = float(
+        normalized.get(
+            "combined_model_energy",
+            internal_model_energy + external_model_energy + shift_energy,
+        )
+    )
+    normalized.setdefault("combined_model_energy", combined_model_energy)
+    normalized.setdefault("internal_model_energy_per_atom", internal_model_energy / size_float)
+    normalized.setdefault("external_model_energy_per_atom", external_model_energy / size_float)
+    normalized.setdefault("shift_energy_per_atom", shift_energy / size_float)
+    normalized.setdefault("combined_model_energy_per_atom", combined_model_energy / size_float)
+    return normalized

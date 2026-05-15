@@ -7,13 +7,10 @@ keep the orchestration logic simple as the project grows.
 """
 
 from pathlib import Path
-import sys
-from types import ModuleType
 
 from ase import Atoms
 from ase.io import write
 
-import graphcluster.allegro_annotation as allegro_annotation
 from graphcluster.runner import TrajectoryPartitionRunner
 
 
@@ -25,16 +22,15 @@ def test_runner_emits_one_bundle_per_frame(
     config_path.write_text(
         "\n".join(
             [
-                "input:",
-                f"  trajectory: {default_toy_dataset}",
-                "frames:",
+                "source:",
+                f"  path: {default_toy_dataset}",
+                "selection:",
                 "  start: 0",
                 "  stop: 3",
                 "  stride: 1",
-                "graph:",
-                "  source: trajectory",
+                "edges:",
+                "  kind: binary",
                 "  cutoff: 3.5",
-                "  kernel: binary",
                 "partition:",
                 "  algorithm: leiden",
                 "  warm_start: true",
@@ -62,20 +58,21 @@ def test_runner_writes_report_artifact_without_collecting_bundles(
     config_path.write_text(
         "\n".join(
             [
-                "input:",
-                f"  trajectory: {default_toy_dataset}",
-                "frames:",
+                "source:",
+                f"  path: {default_toy_dataset}",
+                "selection:",
                 "  start: 0",
                 "  stop: 2",
                 "  stride: 1",
-                "graph:",
-                "  source: trajectory",
+                "edges:",
+                "  kind: binary",
                 "  cutoff: 3.5",
                 "partition:",
                 "  algorithm: leiden",
-                "analysis:",
-                "  enabled: true",
-                f"  output_path: {report_path}",
+                "artifacts:",
+                "  lifecycle_report:",
+                "    enabled: true",
+                f"    output_path: {report_path}",
             ]
         ),
         encoding="utf-8",
@@ -96,14 +93,14 @@ def test_runner_uses_default_toy_dataset_from_fixture(
     config_path.write_text(
         "\n".join(
             [
-                "input:",
-                f"  trajectory: {default_toy_dataset}",
-                "frames:",
+                "source:",
+                f"  path: {default_toy_dataset}",
+                "selection:",
                 "  start: 0",
                 "  stop: 1",
                 "  stride: 1",
-                "graph:",
-                "  source: trajectory",
+                "edges:",
+                "  kind: binary",
                 "  cutoff: 3.5",
                 "partition:",
                 "  algorithm: leiden",
@@ -112,7 +109,7 @@ def test_runner_uses_default_toy_dataset_from_fixture(
         encoding="utf-8",
     )
     runner = TrajectoryPartitionRunner.from_config_path(config_path)
-    assert runner.config["input"]["trajectory"] == str(default_toy_dataset)
+    assert runner.config["source"]["path"] == str(default_toy_dataset)
 
 
 def test_runner_can_process_xyz_trajectory(tmp_path: Path) -> None:
@@ -138,18 +135,17 @@ def test_runner_can_process_xyz_trajectory(tmp_path: Path) -> None:
     config_path.write_text(
         "\n".join(
             [
-                "input:",
+                "source:",
                 "  backend: ase",
                 "  format: xyz",
-                f"  trajectory: {xyz_path}",
-                "frames:",
+                f"  path: {xyz_path}",
+                "selection:",
                 "  start: 0",
                 "  stop: 2",
                 "  stride: 1",
-                "graph:",
-                "  source: trajectory",
+                "edges:",
+                "  kind: binary",
                 "  cutoff: 1.5",
-                "  kernel: binary",
                 "partition:",
                 "  algorithm: leiden",
                 "  objective: cpm",
@@ -177,16 +173,15 @@ def test_runner_can_emit_progress_messages(
     config_path.write_text(
         "\n".join(
             [
-                "input:",
-                f"  trajectory: {default_toy_dataset}",
-                "frames:",
+                "source:",
+                f"  path: {default_toy_dataset}",
+                "selection:",
                 "  start: 0",
                 "  stop: 2",
                 "  stride: 1",
-                "graph:",
-                "  source: trajectory",
+                "edges:",
+                "  kind: binary",
                 "  cutoff: 3.5",
-                "  kernel: binary",
                 "partition:",
                 "  algorithm: leiden",
                 "  objective: cpm",
@@ -214,16 +209,15 @@ def test_runner_can_emit_profiling_messages(
     config_path.write_text(
         "\n".join(
             [
-                "input:",
-                f"  trajectory: {default_toy_dataset}",
-                "frames:",
+                "source:",
+                f"  path: {default_toy_dataset}",
+                "selection:",
                 "  start: 0",
                 "  stop: 1",
                 "  stride: 1",
-                "graph:",
-                "  source: trajectory",
+                "edges:",
+                "  kind: binary",
                 "  cutoff: 3.5",
-                "  kernel: binary",
                 "partition:",
                 "  algorithm: leiden",
                 "  objective: cpm",
@@ -244,223 +238,7 @@ def test_runner_can_emit_profiling_messages(
     assert any(message.startswith("Profiling runtime:") for message in messages)
 
 
-def test_runner_can_annotate_trajectory_before_pipeline(
-    tmp_path: Path,
-    default_toy_dataset: Path,
-    monkeypatch,
-) -> None:
-    annotated_path = tmp_path / "annotated.traj"
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "input:",
-                f"  trajectory: {default_toy_dataset}",
-                "frames:",
-                "  start: 0",
-                "  stop: 2",
-                "  stride: 1",
-                "graph:",
-                "  source: allegro",
-                "partition:",
-                "  algorithm: leiden",
-                "  objective: cpm",
-                "  resolution: 0.05",
-                "allegro:",
-                "  mode: annotate_always",
-                "  compiled_model: /tmp/fake_model.nequip.pt2",
-                f"  annotated_trajectory_path: {annotated_path}",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    def fake_run_allegro_annotation(config, *, progress_callback=None):
-        atoms = Atoms("GaPt", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
-        atoms.info["allegro_edge_indices"] = [[0, 1], [1, 0]]
-        atoms.info["allegro_edge_energies"] = [-0.2, -0.3]
-        write(annotated_path, atoms, format="traj")
-        return annotated_path
-
-    monkeypatch.setattr(allegro_annotation, "run_allegro_annotation", fake_run_allegro_annotation)
-
-    runner = TrajectoryPartitionRunner.from_config_path(config_path)
-    result = runner.run(collect_bundles=True)
-
-    assert result.frames_processed == 1
-    assert result.annotation_artifact == annotated_path
-    assert runner.reader.trajectory_path == str(annotated_path)
-    assert result.collected_bundles[0].graph.metadata["source"] == "allegro"
-    assert result.collected_bundles[0].graph.adjacency[0, 1] == 0.5
-
-
-def test_runner_switches_reader_format_after_xyz_annotation_to_traj(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    raw_xyz_path = tmp_path / "raw.xyz"
-    raw_xyz_path.write_text(
-        "\n".join(
-            [
-                "2",
-                "frame 0",
-                "Si 0.0 0.0 0.0",
-                "O 1.0 0.0 0.0",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    annotated_path = tmp_path / "annotated.traj"
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "input:",
-                "  backend: ase",
-                "  format: xyz",
-                f"  trajectory: {raw_xyz_path}",
-                "frames:",
-                "  start: 0",
-                "  stop: 1",
-                "  stride: 1",
-                "graph:",
-                "  source: allegro",
-                "partition:",
-                "  algorithm: leiden",
-                "  objective: cpm",
-                "  resolution: 0.05",
-                "allegro:",
-                "  mode: annotate_always",
-                "  compiled_model: /tmp/fake_model.nequip.pt2",
-                f"  annotated_trajectory_path: {annotated_path}",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    def fake_run_allegro_annotation(config, *, progress_callback=None):
-        atoms = Atoms("SiO", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
-        atoms.info["allegro_edge_indices"] = [[0, 1], [1, 0]]
-        atoms.info["allegro_edge_energies"] = [-0.2, -0.3]
-        write(annotated_path, atoms, format="traj")
-        return annotated_path
-
-    monkeypatch.setattr(allegro_annotation, "run_allegro_annotation", fake_run_allegro_annotation)
-
-    runner = TrajectoryPartitionRunner.from_config_path(config_path)
-    original_input_config = dict(runner.config["input"])
-    result = runner.run(collect_bundles=True)
-
-    assert result.frames_processed == 1
-    assert runner.reader.trajectory_path == str(annotated_path)
-    assert runner.reader.format == "traj"
-    assert runner.config["input"] == original_input_config
-    assert runner.reader.input_config is not None
-    assert runner.reader.input_config["trajectory"] == str(raw_xyz_path)
-    assert runner.reader.input_config["format"] == "xyz"
-    assert runner.reader.input_config["cell_origin_reference_trajectory"] == str(raw_xyz_path)
-    assert runner.reader.input_config["cell_origin_reference_format"] == "xyz"
-
-
-def test_run_allegro_annotation_imports_callable_from_submodule(monkeypatch) -> None:
-    calls: list[dict] = []
-
-    package_module = ModuleType("allegro_ase_edge_export")
-    package_module.__path__ = []
-    package_module.annotate_trajectory = ModuleType(
-        "allegro_ase_edge_export.annotate_trajectory"
-    )
-
-    submodule = ModuleType("allegro_ase_edge_export.annotate_trajectory")
-
-    def fake_annotate_trajectory(**kwargs):
-        calls.append(kwargs)
-        return "/tmp/annotated.traj"
-
-    submodule.annotate_trajectory = fake_annotate_trajectory
-
-    monkeypatch.setitem(sys.modules, "allegro_ase_edge_export", package_module)
-    monkeypatch.setitem(
-        sys.modules,
-        "allegro_ase_edge_export.annotate_trajectory",
-        submodule,
-    )
-
-    result = allegro_annotation.run_allegro_annotation(
-        {
-            "input": {
-                "trajectory": "/tmp/input.xyz",
-                "format": "xyz",
-            },
-            "frames": {
-                "start": 1,
-                "stop": 4,
-                "stride": 2,
-            },
-            "allegro": {
-                "compiled_model": "/tmp/model.pt2",
-                "annotated_trajectory_path": "/tmp/annotated.traj",
-                "device": "cpu",
-            },
-        }
-    )
-
-    assert result == Path("/tmp/annotated.traj")
-    assert len(calls) == 1
-    assert calls[0]["compiled_model"] == "/tmp/model.pt2"
-    assert calls[0]["input_path"] == "/tmp/input.xyz"
-    assert calls[0]["output_path"] == "/tmp/annotated.traj"
-
-
-def test_runner_can_stop_after_allegro_annotation_only(
-    tmp_path: Path,
-    default_toy_dataset: Path,
-    monkeypatch,
-) -> None:
-    annotated_path = tmp_path / "annotated.traj"
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "\n".join(
-            [
-                "input:",
-                f"  trajectory: {default_toy_dataset}",
-                "graph:",
-                "  source: allegro",
-                "partition:",
-                "  algorithm: leiden",
-                "allegro:",
-                "  mode: annotate_only",
-                "  compiled_model: /tmp/fake_model.nequip.pt2",
-                f"  annotated_trajectory_path: {annotated_path}",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    def fake_run_allegro_annotation(config, *, progress_callback=None):
-        atoms = Atoms("GaPt", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
-        atoms.info["allegro_edge_indices"] = [[0, 1], [1, 0]]
-        atoms.info["allegro_edge_energies"] = [-0.2, -0.3]
-        write(annotated_path, atoms, format="traj")
-        return annotated_path
-
-    monkeypatch.setattr(allegro_annotation, "run_allegro_annotation", fake_run_allegro_annotation)
-
-    runner = TrajectoryPartitionRunner.from_config_path(config_path)
-    result = runner.run()
-
-    assert result.frames_processed == 0
-    assert result.annotation_artifact == annotated_path
-    assert result.analysis_artifact is None
-    assert result.visualization_artifacts == []
-
-
-def test_runner_can_skip_annotation_when_input_already_contains_allegro_edges(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_runner_can_process_preannotated_allegro_trajectory(tmp_path: Path) -> None:
     traj_path = tmp_path / "already_annotated.traj"
     atoms = Atoms("GaPt", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     atoms.info["allegro_edge_indices"] = [[0, 1], [1, 0]]
@@ -471,35 +249,59 @@ def test_runner_can_skip_annotation_when_input_already_contains_allegro_edges(
     config_path.write_text(
         "\n".join(
             [
-                "input:",
-                f"  trajectory: {traj_path}",
-                "frames:",
+                "source:",
+                f"  path: {traj_path}",
+                "selection:",
                 "  start: 0",
                 "  stop: 1",
                 "  stride: 1",
-                "graph:",
-                "  source: allegro",
+                "edges:",
+                "  kind: allegro",
                 "partition:",
                 "  algorithm: leiden",
                 "  objective: cpm",
                 "  resolution: 0.05",
-                "allegro:",
-                "  mode: annotate_if_missing",
-                "  compiled_model: /tmp/fake_model.nequip.pt2",
-                f"  annotated_trajectory_path: {tmp_path / 'unused.traj'}",
             ]
         ),
         encoding="utf-8",
     )
 
-    def fail_run_allegro_annotation(config, *, progress_callback=None):
-        raise AssertionError("annotation should not have been called")
-
-    monkeypatch.setattr(allegro_annotation, "run_allegro_annotation", fail_run_allegro_annotation)
-
     runner = TrajectoryPartitionRunner.from_config_path(config_path)
     result = runner.run(collect_bundles=True)
 
     assert result.frames_processed == 1
-    assert result.annotation_artifact is None
     assert result.collected_bundles[0].graph.metadata["source"] == "allegro"
+    assert result.collected_bundles[0].graph.adjacency[0, 1] == 0.5
+
+
+def test_runner_fails_clearly_when_allegro_source_is_not_annotated(tmp_path: Path) -> None:
+    raw_path = tmp_path / "raw.traj"
+    atoms = Atoms("GaPt", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    write(raw_path, atoms, format="traj")
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "source:",
+                f"  path: {raw_path}",
+                "selection:",
+                "  start: 0",
+                "  stop: 1",
+                "  stride: 1",
+                "edges:",
+                "  kind: allegro",
+                "partition:",
+                "  algorithm: leiden",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    runner = TrajectoryPartitionRunner.from_config_path(config_path)
+    try:
+        runner.run(collect_bundles=True)
+    except ValueError as exc:
+        assert "edges.kind='allegro'" in str(exc)
+    else:
+        raise AssertionError("Expected missing Allegro metadata to raise ValueError.")

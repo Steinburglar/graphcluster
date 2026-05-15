@@ -46,12 +46,12 @@ def test_trajectory_reader_resolves_chemical_symbols_from_type_map(
 ) -> None:
     reader = TrajectoryReader.from_config(
         {
-            "input": {
-                "trajectory": str(default_toy_dataset),
+            "source": {
+                "path": str(default_toy_dataset),
                 "backend": "ase",
                 "type_map": {1: "Ga", 2: "Pt"},
             },
-            "frames": {
+            "selection": {
                 "start": 0,
                 "stop": 1,
                 "stride": 1,
@@ -66,11 +66,11 @@ def test_trajectory_reader_resolves_chemical_symbols_from_type_map(
 def test_trajectory_reader_from_config_respects_backend_and_path(default_toy_dataset) -> None:
     reader = TrajectoryReader.from_config(
         {
-            "input": {
-                "trajectory": str(default_toy_dataset),
+            "source": {
+                "path": str(default_toy_dataset),
                 "backend": "ase",
             },
-            "frames": {
+            "selection": {
                 "start": 0,
                 "stop": 1,
                 "stride": 1,
@@ -159,38 +159,3 @@ def test_trajectory_reader_can_infer_and_read_traj_frames(tmp_path: Path) -> Non
     assert frames[0].positions.shape == (2, 3)
     assert frames[1].positions[0, 0] == 0.1
 
-
-def test_trajectory_reader_can_recover_cell_origin_from_reference_trajectory(
-    tmp_path: Path,
-) -> None:
-    annotated_traj_path = tmp_path / "annotated.traj"
-    annotated_atoms = Atoms("SiO", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
-    write(annotated_traj_path, annotated_atoms, format="traj")
-
-    reference_xyz_path = tmp_path / "reference.extxyz"
-    reference_atoms = Atoms("SiO", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
-    reference_atoms.set_cell([5.0, 5.0, 5.0])
-    reference_atoms.set_pbc(True)
-    reference_atoms.info["cell_origin"] = [-2.0, -2.0, -2.0]
-    write(reference_xyz_path, reference_atoms, format="extxyz")
-
-    reader = TrajectoryReader.from_config(
-        {
-            "input": {
-                "trajectory": str(annotated_traj_path),
-                "backend": "ase",
-                "cell_origin_reference_trajectory": str(reference_xyz_path),
-                "cell_origin_reference_format": "extxyz",
-            },
-            "frames": {
-                "start": 0,
-                "stop": 1,
-                "stride": 1,
-            },
-        }
-    )
-
-    frame = next(iter(reader))
-    assert frame.cell_origin is not None
-    assert frame.cell_origin.tolist() == [-2.0, -2.0, -2.0]
-    assert frame.metadata["reference_metadata"]["cell_origin"] == [-2.0, -2.0, -2.0]

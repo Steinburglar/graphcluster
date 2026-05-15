@@ -44,25 +44,40 @@ class GraphBuilder:
 
     def build(self, frame: Frame) -> SparseWeightedGraph:
         """Create the canonical graph object for a frame."""
-        graph_config = self.config.get("graph", {})
-        input_config = self.config.get("input", {})
-        source = graph_config.get("source", "trajectory")
-        if source == "allegro":
-            adjacency = build_allegro_adjacency(frame, graph_config)
+        edges_config = self.config.get("edges", {})
+        source_config = self.config.get("source", {})
+        edge_kind = str(edges_config.get("kind", "binary"))
+        uses_allegro_edges = edge_kind == "allegro"
+        if uses_allegro_edges:
+            adjacency = build_allegro_adjacency(frame, edges_config)
         else:
-            adjacency = build_trajectory_adjacency(frame, graph_config, input_config=input_config)
+            adjacency = build_trajectory_adjacency(
+                frame,
+                edges_config,
+                source_config=source_config,
+            )
         num_nodes = len(frame.positions)
-        metadata = {"source": source, "num_nodes": num_nodes}
+        metadata = {
+            "source": "allegro" if uses_allegro_edges else "trajectory",
+            "edge_kind": edge_kind,
+            "num_nodes": num_nodes,
+        }
         if sparse.issparse(adjacency):
-            metadata["num_edges"] = int(adjacency.nnz // (1 if graph_config.get("directed", False) else 2))
-        if source == "trajectory":
-            cutoff, cutoff_source = resolve_cutoff_spec(frame, graph_config, input_config=input_config)
+            metadata["num_edges"] = int(
+                adjacency.nnz // (1 if edges_config.get("directed", False) else 2)
+            )
+        if not uses_allegro_edges:
+            cutoff, cutoff_source = resolve_cutoff_spec(
+                frame,
+                edges_config,
+                source_config=source_config,
+            )
             metadata["cutoff"] = cutoff
             metadata["cutoff_source"] = cutoff_source
-            metadata["kernel"] = resolve_kernel_config(graph_config)[0]
+            metadata["kernel"] = resolve_kernel_config(edges_config)[0]
         return SparseWeightedGraph(
             frame_index=frame.index,
             adjacency=adjacency,
-            directed=graph_config.get("directed", False),
+            directed=edges_config.get("directed", False),
             metadata=metadata,
         )

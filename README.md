@@ -104,12 +104,14 @@ python -m pip install -e '.[dev,vis]'
 This install path does three useful things:
 - it reads the dependency metadata from `pyproject.toml`
 - it installs the package in editable mode so local source edits are picked up
-- it exposes the console scripts `graphcluster` and `graphcluster-view-ase`
+- it exposes the console scripts `graphcluster`, `annotate-allegro`, and
+  `graphcluster-view-ase`
 
 You can verify the environment with:
 
 ```bash
 which python
+which annotate-allegro
 which graphcluster
 which graphcluster-view-ase
 python -c "import graphcluster, ase, scipy, yaml, matplotlib; print('graphcluster environment ok')"
@@ -183,9 +185,10 @@ Current graph-kernel support includes:
 - `inverse_distance`
 - `smooth_inverse_distance`
 
-The graph builder also supports a separate source path:
-- `graph.source: trajectory` builds edges from geometry
-- `graph.source: allegro` consumes exported Allegro edge arrays from ASE
+The graph builder supports Allegro-derived edges through the `edges` block:
+- `edges.kind: binary` builds geometry-only cutoff edges
+- `edges.kind: gaussian` builds geometry-weighted cutoff edges
+- `edges.kind: allegro` consumes exported Allegro edge arrays from ASE
   trajectory metadata
 
 For the current Allegro path, the expected ASE metadata keys are:
@@ -256,51 +259,39 @@ analysis:
 Both writers support `write_batch_size` so we can trade off write frequency
 against transient in-memory buffering.
 
-## Allegro Pre-Annotation
+## Allegro Annotation
 
-`graphcluster` can now optionally orchestrate an Allegro edge-annotation step
-before the normal clustering pipeline begins. This is meant for the workflow:
-- start from a raw trajectory that does not yet contain exported edge energies
-- run a compiled Allegro ASE calculator over those frames
-- write a new ASE trajectory containing the normal frame data plus
-  `allegro_*` edge metadata
-- continue directly into the graph clustering pipeline
+Allegro annotation is intentionally separate from clustering. First create an
+annotated ASE trajectory:
 
-This is controlled through an optional top-level `allegro:` block:
-
-```yaml
-input:
-  backend: ase
-  format: lammps-dump-binary
-  trajectory: /path/to/raw_trajectory.bin
-
-graph:
-  source: allegro
-
-allegro:
-  mode: annotate_if_missing
-  compiled_model: /path/to/compiled_model.nequip.pt2
-  annotated_trajectory_path: outputs/allegro_run/allegro_edges.traj
-  device: cuda
-  raw_type_map:
-    1: Ga
-    2: Pt
+```bash
+annotate-allegro \
+  --input /path/to/raw.xyz \
+  --input-format xyz \
+  --compiled-model /path/to/model.nequip.pt2 \
+  --output /path/to/allegro_edges.traj \
+  --output-format traj \
+  --device cuda
 ```
 
-Supported `allegro.mode` values are:
-- `disabled`
-- `require_precomputed`
-- `annotate_if_missing`
-- `annotate_always`
-- `annotate_only`
+Then point `graphcluster` at that artifact:
+
+```yaml
+source:
+  backend: ase
+  format: traj
+  path: /path/to/allegro_edges.traj
+
+edges:
+  kind: allegro
+  energy_to_weight: abs_negative_sum
+```
 
 Important semantics:
-- the annotation step writes a new derived ASE trajectory file; it does not
-  modify the original input trajectory in place
-- the derived file contains both the usual atomic trajectory information and
-  exported `allegro_*` edge metadata in `Atoms.info`
-- when annotation is enabled and the mode continues the run, `graphcluster`
-  automatically switches its effective input to that derived trajectory
+- `graphcluster` reads exactly one trajectory from `source.path`
+- `graphcluster` never modifies input and never switches files mid-run
+- `edges.kind: allegro` requires `source.path` to already contain
+  `allegro_edge_indices` and `allegro_edge_energies`
 
 The report artifact can later be loaded without rerunning clustering:
 

@@ -28,7 +28,7 @@ class ASETrajectorySource:
     stop: int | None = None
     stride: int = 1
     format: str | None = None
-    input_config: dict | None = None
+    source_config: dict | None = None
 
     def _ase_format(self) -> str | None:
         path = Path(self.trajectory_path)
@@ -47,27 +47,6 @@ class ASETrajectorySource:
 
     def _ase_kwargs(self) -> dict:
         fmt = self._ase_format()
-        kwargs: dict = {"index": slice(self.start, self.stop, self.stride)}
-        if fmt is not None:
-            kwargs["format"] = fmt
-        if fmt == "lammps-dump-binary":
-            kwargs["colnames"] = ["id", "type", "x", "y", "z"]
-        return kwargs
-
-    def _reference_trajectory_path(self) -> str | None:
-        input_config = self.input_config or {}
-        reference_path = input_config.get("cell_origin_reference_trajectory")
-        if reference_path:
-            return str(reference_path)
-        return None
-
-    def _reference_ase_kwargs(self) -> dict | None:
-        reference_path = self._reference_trajectory_path()
-        if reference_path is None:
-            return None
-        input_config = self.input_config or {}
-        reference_format = input_config.get("cell_origin_reference_format")
-        fmt = reference_format or infer_ase_format(reference_path)
         kwargs: dict = {"index": slice(self.start, self.stop, self.stride)}
         if fmt is not None:
             kwargs["format"] = fmt
@@ -119,8 +98,8 @@ class ASETrajectorySource:
         """Resolve raw atom types into chemical symbols when a mapping is provided."""
         if atom_types is None:
             return None
-        input_config = self.input_config or {}
-        raw_type_map = input_config.get("type_map")
+        source_config = self.source_config or {}
+        raw_type_map = source_config.get("type_map")
         if not raw_type_map:
             return None
 
@@ -130,41 +109,18 @@ class ASETrajectorySource:
             key = str(atom_type)
             if key not in type_map:
                 raise ValueError(
-                    "input.type_map was provided, but no chemical symbol mapping exists "
+                    "source.type_map was provided, but no chemical symbol mapping exists "
                     f"for raw atom type {atom_type!r}."
                 )
             chemical_symbols.append(type_map[key])
         return chemical_symbols
 
     def __iter__(self) -> Iterator[Frame]:
-        reference_kwargs = self._reference_ase_kwargs()
-        if reference_kwargs is None:
-            for index, atoms in enumerate(
-                iread(self.trajectory_path, **self._ase_kwargs()),
-                start=self.start,
-            ):
-                yield self._frame_from_atoms(index, atoms)
-            return
-
-        reference_path = self._reference_trajectory_path()
-        assert reference_path is not None
-        current_iter = iread(self.trajectory_path, **self._ase_kwargs())
-        reference_iter = iread(reference_path, **reference_kwargs)
-        for index, (atoms, reference_atoms) in enumerate(
-            zip(current_iter, reference_iter),
+        for index, atoms in enumerate(
+            iread(self.trajectory_path, **self._ase_kwargs()),
             start=self.start,
         ):
-            frame = self._frame_from_atoms(index, atoms)
-            if frame.cell_origin is None or not np.any(frame.cell_origin):
-                reference_metadata = self._build_frame_metadata(reference_atoms)
-                reference_origin = resolve_cell_origin(reference_atoms, reference_metadata)
-                reference_origin = np.asarray(reference_origin, dtype=float).reshape(-1)
-                if reference_origin.size == 3 and np.any(reference_origin):
-                    frame.cell_origin = reference_origin
-                    frame.metadata.setdefault("reference_metadata", {})["cell_origin"] = (
-                        reference_origin.tolist()
-                    )
-            yield frame
+            yield self._frame_from_atoms(index, atoms)
 
 
 def infer_ase_format(path: str) -> str | None:

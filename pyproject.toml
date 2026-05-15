@@ -29,6 +29,7 @@ vis = [
 ]
 
 [project.scripts]
+annotate-allegro = "graphcluster.annotate_allegro_cli:main"
 graphcluster = "graphcluster.cli:main"
 graphcluster-view-ase = "graphcluster.view_ase_artifact:main"
 

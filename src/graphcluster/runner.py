@@ -23,11 +23,10 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable
 
-from .allegro_annotation import prepare_allegro_input
 from .analysis.lifecycle_recorder import ClusterLifecycleRecorder
 from .bundle.frame_bundle import FrameBundle
 from .graph.graph_builder import GraphBuilder
-from .io.trajectory_reader import TrajectoryReader, infer_trajectory_format
+from .io.trajectory_reader import TrajectoryReader
 from .partitioning.partitioner import Partitioner
 from .tracking.cluster_tracker import ClusterTracker
 from .utils.config import load_config
@@ -41,7 +40,6 @@ class TrajectoryRunResult:
     frames_processed: int = 0
     visualization_artifacts: list[Path] = field(default_factory=list)
     analysis_artifact: Path | None = None
-    annotation_artifact: Path | None = None
     collected_bundles: list[FrameBundle] = field(default_factory=list)
     startup_timings: dict[str, float] = field(default_factory=dict)
     run_timings: dict[str, float] = field(default_factory=dict)
@@ -127,8 +125,6 @@ class TrajectoryPartitionRunner:
         profiling_enabled = self._profiling_enabled(profile)
         run_started = perf_counter()
         run_timings = {
-            "prepare_allegro_input": 0.0,
-            "switch_effective_reader": 0.0,
             "read_frame": 0.0,
             "graph_build": 0.0,
             "partition_local": 0.0,
@@ -153,43 +149,6 @@ class TrajectoryPartitionRunner:
                     f"{format_timing_summary(self.startup_timings, order=STARTUP_TIMING_ORDER)}"
                 )
 
-        phase_started = perf_counter()
-        preparation = prepare_allegro_input(
-            self.config,
-            progress_callback=emit_progress if progress else None,
-        )
-        run_timings["prepare_allegro_input"] += perf_counter() - phase_started
-        if preparation.annotation_performed:
-            phase_started = perf_counter()
-            self._switch_effective_trajectory(preparation.effective_trajectory_path)
-            run_timings["switch_effective_reader"] += perf_counter() - phase_started
-            if progress:
-                emit_progress(
-                    "Using Allegro-annotated trajectory: "
-                    f"{preparation.effective_trajectory_path}"
-                )
-        if preparation.stop_after_annotation:
-            if progress:
-                emit_progress(
-                    "Stopping after Allegro edge annotation as requested by "
-                    "allegro.mode=annotate_only."
-                )
-                if profiling_enabled:
-                    completed_run_timings = dict(run_timings)
-                    completed_run_timings["run_total"] = perf_counter() - run_started
-                    emit_progress(
-                        "Profiling runtime: "
-                        f"{format_timing_summary(completed_run_timings, order=RUN_TIMING_ORDER)}"
-                    )
-            return TrajectoryRunResult(
-                frames_processed=0,
-                visualization_artifacts=[],
-                analysis_artifact=None,
-                annotation_artifact=preparation.annotation_artifact,
-                collected_bundles=[],
-                startup_timings=dict(self.startup_timings),
-                run_timings=completed_run_timings if profiling_enabled else dict(run_timings),
-            )
         analysis_artifact: Path | None = None
         try:
             frame_iterator = iter(self.reader)
@@ -266,31 +225,9 @@ class TrajectoryPartitionRunner:
             frames_processed=frames_processed,
             visualization_artifacts=list(self.visualizer.written_artifacts),
             analysis_artifact=analysis_artifact,
-            annotation_artifact=preparation.annotation_artifact,
             collected_bundles=collected_bundles,
             startup_timings=dict(self.startup_timings),
             run_timings=completed_run_timings,
-        )
-
-    def _switch_effective_trajectory(self, trajectory_path: str) -> None:
-        """Rebuild the reader around a derived runtime trajectory artifact."""
-        source_input = dict(self.config.get("input", {}))
-        allegro_output_format = self.config.get("allegro", {}).get("output_format")
-        source_input["cell_origin_reference_trajectory"] = self.reader.trajectory_path
-        if self.reader.format is not None:
-            source_input["cell_origin_reference_format"] = self.reader.format
-        effective_format = infer_trajectory_format(
-            str(trajectory_path),
-            explicit_format=allegro_output_format,
-        )
-        self.reader = TrajectoryReader(
-            trajectory_path=str(trajectory_path),
-            start=self.reader.start,
-            stop=self.reader.stop,
-            stride=self.reader.stride,
-            format=effective_format,
-            backend=self.reader.backend,
-            input_config=source_input,
         )
 
     def _profiling_enabled(self, profile: bool | None) -> bool:
@@ -314,8 +251,6 @@ STARTUP_TIMING_ORDER = (
 
 RUN_TIMING_ORDER = (
     "run_total",
-    "prepare_allegro_input",
-    "switch_effective_reader",
     "read_frame",
     "graph_build",
     "partition_local",

@@ -38,13 +38,14 @@ class Visualizer:
     @classmethod
     def from_config(cls, config: dict) -> "Visualizer":
         """Build a visualizer from config."""
-        visualization_config = config.get("visualization", {})
+        artifacts_config = config.get("artifacts", {})
+        visualization_config = artifacts_config.get("visualization", {})
         enabled = visualization_config.get("enabled", False)
         backend = visualization_config.get("backend", "none")
         mode = visualization_config.get("mode", "collect")
         every_n = max(1, int(visualization_config.get("every_n", 1)))
         write_batch_size = max(1, int(visualization_config.get("write_batch_size", 1)))
-        output_path = _resolve_output_path(config, visualization_config)
+        output_path = _resolve_output_path(artifacts_config, visualization_config)
         return cls(
             enabled=enabled,
             backend=backend,
@@ -85,7 +86,7 @@ class Visualizer:
         if self.output_path is None:
             raise ValueError(
                 "ASE trajectory visualization requires visualization.output_path "
-                "or output.directory to be set."
+                "or artifacts.directory to be set."
             )
         if self._writer is None:
             self._writer = AseTrajectoryWriter(self.output_path)
@@ -102,14 +103,13 @@ class Visualizer:
         self._pending_payloads.clear()
 
 
-def _resolve_output_path(config: dict, visualization_config: dict) -> Path | None:
+def _resolve_output_path(artifacts_config: dict, visualization_config: dict) -> Path | None:
     """Resolve the artifact path for visualization outputs."""
     explicit_path = visualization_config.get("output_path")
     if explicit_path:
         return Path(explicit_path)
 
-    output_config = config.get("output", {})
-    output_directory = output_config.get("directory")
+    output_directory = artifacts_config.get("directory")
     if output_directory:
         return Path(output_directory) / "visualization.extxyz"
 

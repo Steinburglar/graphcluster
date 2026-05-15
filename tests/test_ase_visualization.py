@@ -45,11 +45,13 @@ def test_payload_to_ase_atoms_keeps_debug_arrays() -> None:
 def test_visualizer_writes_ase_trajectory_artifact(tmp_path: Path) -> None:
     visualizer = Visualizer.from_config(
         {
-            "visualization": {
-                "enabled": True,
-                "backend": "ase",
-                "mode": "traj",
-                "output_path": str(tmp_path / "visualization.extxyz"),
+            "artifacts": {
+                "visualization": {
+                    "enabled": True,
+                    "backend": "ase",
+                    "mode": "traj",
+                    "output_path": str(tmp_path / "visualization.extxyz"),
+                }
             }
         }
     )
@@ -88,30 +90,30 @@ def test_pipeline_can_run_analysis_and_write_visualization(
     config_path.write_text(
         "\n".join(
             [
-                "input:",
-                f"  trajectory: {default_toy_dataset}",
+                "source:",
+                f"  path: {default_toy_dataset}",
                 "  type_map:",
                 "    1: Ga",
                 "    2: Pt",
-                "frames:",
+                "selection:",
                 "  start: 0",
                 "  stop: 2",
                 "  stride: 1",
-                "graph:",
-                "  source: trajectory",
+                "edges:",
+                "  kind: distance",
                 "  cutoff: 3.5",
-                "  kernel: distance",
                 "partition:",
                 "  algorithm: leiden",
                 "  warm_start: true",
-                "visualization:",
-                "  enabled: true",
-                "  backend: ase",
-                "  mode: traj",
-                f"  output_path: {artifact_path}",
-                "analysis:",
-                "  enabled: true",
-                f"  output_path: {report_path}",
+                "artifacts:",
+                "  visualization:",
+                "    enabled: true",
+                "    backend: ase",
+                "    mode: traj",
+                f"    output_path: {artifact_path}",
+                "  lifecycle_report:",
+                "    enabled: true",
+                f"    output_path: {report_path}",
             ]
         ),
         encoding="utf-8",
