@@ -116,10 +116,9 @@ class ASETrajectorySource:
         return chemical_symbols
 
     def __iter__(self) -> Iterator[Frame]:
-        for index, atoms in enumerate(
-            iread(self.trajectory_path, **self._ase_kwargs()),
-            start=self.start,
-        ):
+        for selected_offset, atoms in enumerate(iread(self.trajectory_path, **self._ase_kwargs())):
+            # Preserve absolute source frame index for progress logs and artifacts.
+            index = self.start + selected_offset * self.stride
             yield self._frame_from_atoms(index, atoms)
 
 

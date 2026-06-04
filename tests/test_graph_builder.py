@@ -119,6 +119,98 @@ def test_graph_builder_ignores_positive_and_self_allegro_edges() -> None:
     assert graph.adjacency.nnz == 0
 
 
+def test_graph_builder_can_use_signed_shifted_sum_for_allegro_edges() -> None:
+    builder = GraphBuilder.from_config(
+        {
+            "graph": {
+                "source": "allegro",
+                "energy_field": "scaled",
+                "energy_to_weight": "signed_shifted_sum",
+                "species_shifts": {"H": -4.0, "Pt": -2.0},
+                "avg_num_neighbors": 2.0,
+            }
+        }
+    )
+    graph = builder.build(
+        Frame(
+            index=0,
+            positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            atom_types=["H", "Pt"],
+            metadata={
+                "ase_info": {
+                    "allegro_edge_indices": [[0, 1], [1, 0]],
+                    "allegro_edge_scaled_energies": [-0.2, -0.3],
+                }
+            },
+        )
+    )
+    # Each directed contribution uses -(E + shift/avg_nbr):
+    # H->Pt: -(-0.2 + -4/2) = 2.2
+    # Pt->H: -(-0.3 + -2/2) = 1.3
+    # undirected sum = 3.5
+    assert graph.adjacency[0, 1] == pytest.approx(3.5)
+    assert graph.adjacency[1, 0] == pytest.approx(3.5)
+
+
+def test_graph_builder_keeps_negative_weights_in_signed_shifted_sum() -> None:
+    builder = GraphBuilder.from_config(
+        {
+            "graph": {
+                "source": "allegro",
+                "energy_field": "scaled",
+                "energy_to_weight": "signed_shifted_sum",
+                "species_shifts": {"H": 0.0, "Pt": 0.0},
+                "avg_num_neighbors": 1.0,
+            }
+        }
+    )
+    graph = builder.build(
+        Frame(
+            index=0,
+            positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            atom_types=["H", "Pt"],
+            metadata={
+                "ase_info": {
+                    "allegro_edge_indices": [[0, 1], [1, 0]],
+                    "allegro_edge_scaled_energies": [0.2, 0.3],
+                }
+            },
+        )
+    )
+    # contributions = -0.2 and -0.3 => undirected = -0.5
+    assert graph.adjacency[0, 1] == pytest.approx(-0.5)
+    assert graph.adjacency[1, 0] == pytest.approx(-0.5)
+
+
+def test_graph_builder_signed_shifted_sum_uses_chemical_symbols_for_lookup() -> None:
+    builder = GraphBuilder.from_config(
+        {
+            "graph": {
+                "source": "allegro",
+                "energy_field": "scaled",
+                "energy_to_weight": "signed_shifted_sum",
+                "species_shifts": {"H": -4.0, "Pt": -2.0},
+                "avg_num_neighbors": {"H": 2.0, "Pt": 2.0},
+            }
+        }
+    )
+    graph = builder.build(
+        Frame(
+            index=0,
+            positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            atom_types=[2, 1],
+            chemical_symbols=["Pt", "H"],
+            metadata={
+                "ase_info": {
+                    "allegro_edge_indices": [[0, 1], [1, 0]],
+                    "allegro_edge_scaled_energies": [-0.2, -0.3],
+                }
+            },
+        )
+    )
+    assert graph.adjacency[0, 1] == pytest.approx(3.5)
+
+
 def test_graph_builder_can_use_distance_kernel() -> None:
     builder = GraphBuilder.from_config(
         {"graph": {"cutoff": 2.0, "kernel": "distance"}}

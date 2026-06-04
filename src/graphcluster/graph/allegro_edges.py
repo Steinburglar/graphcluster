@@ -51,10 +51,13 @@ def build_allegro_adjacency(frame: Frame, edges_config: dict) -> sparse.csr_matr
     edge_index = normalize_edge_index(edge_index)
     validate_edge_payload(edge_index=edge_index, edge_energy=edge_energy, num_nodes=num_nodes)
 
+    energy_to_weight = str(edges_config.get("energy_to_weight", "abs_negative_sum"))
     undirected_weights = combine_directed_edge_energies(
         edge_index=edge_index,
         edge_energy=edge_energy,
-        energy_to_weight=str(edges_config.get("energy_to_weight", "abs_negative_sum")),
+        energy_to_weight=energy_to_weight,
+        frame=frame,
+        edges_config=edges_config,
     )
     if not undirected_weights:
         return sparse.csr_matrix((num_nodes, num_nodes), dtype=float)
@@ -62,8 +65,11 @@ def build_allegro_adjacency(frame: Frame, edges_config: dict) -> sparse.csr_matr
     rows: list[int] = []
     cols: list[int] = []
     data: list[float] = []
+    allow_negative_weights = energy_to_weight == "signed_shifted_sum"
     for (source, target), weight in undirected_weights.items():
-        if weight <= 0:
+        if weight == 0:
+            continue
+        if not allow_negative_weights and weight <= 0:
             continue
         rows.extend([source, target])
         cols.extend([target, source])
@@ -175,6 +181,8 @@ def combine_directed_edge_energies(
     edge_index: np.ndarray,
     edge_energy: np.ndarray,
     energy_to_weight: str,
+    frame: Frame,
+    edges_config: dict,
 ) -> dict[tuple[int, int], float]:
     """Collapse directed edge energies into undirected bond strengths.
 
@@ -187,19 +195,107 @@ def combine_directed_edge_energies(
     for (source, target), energy in zip(edge_index, edge_energy, strict=True):
         if source == target:
             continue
-        contribution = convert_energy_to_weight(float(energy), energy_to_weight)
-        if contribution <= 0:
+        contribution = convert_energy_to_weight(
+            float(energy),
+            energy_to_weight,
+            source=int(source),
+            frame=frame,
+            edges_config=edges_config,
+        )
+        if contribution == 0:
             continue
         pair = tuple(sorted((int(source), int(target))))
         undirected_weights[pair] += contribution
     return dict(undirected_weights)
 
 
-def convert_energy_to_weight(energy: float, energy_to_weight: str) -> float:
-    """Convert one directed Allegro edge energy into a nonnegative graph weight."""
+def convert_energy_to_weight(
+    energy: float,
+    energy_to_weight: str,
+    *,
+    source: int,
+    frame: Frame,
+    edges_config: dict,
+) -> float:
+    """Convert one directed Allegro edge energy into a graph weight."""
     if energy_to_weight == "abs_negative_sum":
         return abs(energy) if energy < 0 else 0.0
+    if energy_to_weight == "signed_shifted_sum":
+        shift_term = _source_shift_per_edge(
+            source=source,
+            frame=frame,
+            edges_config=edges_config,
+        )
+        return -(energy + shift_term)
     raise ValueError(
         "Unsupported edges.energy_to_weight "
-        f"{energy_to_weight!r}. Supported values are ['abs_negative_sum']."
+        f"{energy_to_weight!r}. Supported values are ['abs_negative_sum', 'signed_shifted_sum']."
+    )
+
+
+def _source_shift_per_edge(*, source: int, frame: Frame, edges_config: dict) -> float:
+    species_shifts = edges_config.get("species_shifts")
+    if not isinstance(species_shifts, dict):
+        raise ValueError(
+            "edges.energy_to_weight='signed_shifted_sum' requires "
+            "edges.species_shifts mapping species->shift."
+        )
+    atom_types = frame.atom_types
+    if atom_types is None:
+        raise ValueError(
+            "edges.energy_to_weight='signed_shifted_sum' requires frame.atom_types."
+        )
+    if source < 0 or source >= len(atom_types):
+        raise ValueError(f"Source atom index {source} out of bounds for atom_types.")
+
+    species = _source_species_label(frame, source)
+    shift = _lookup_species_value(
+        species_map=species_shifts,
+        species=species,
+        field_name="edges.species_shifts",
+        frame=frame,
+    )
+    avg_num_neighbors = edges_config.get("avg_num_neighbors")
+    if avg_num_neighbors is None:
+        return shift
+    if isinstance(avg_num_neighbors, dict):
+        denom = _lookup_species_value(
+            species_map=avg_num_neighbors,
+            species=species,
+            field_name="edges.avg_num_neighbors",
+            frame=frame,
+        )
+    else:
+        denom = float(avg_num_neighbors)
+    if denom <= 0:
+        raise ValueError("edges.avg_num_neighbors must be positive.")
+    return shift / denom
+
+
+def _source_species_label(frame: Frame, source: int) -> str:
+    if frame.chemical_symbols is not None and source < len(frame.chemical_symbols):
+        return str(frame.chemical_symbols[source])
+    assert frame.atom_types is not None
+    return str(frame.atom_types[source])
+
+
+def _lookup_species_value(
+    *,
+    species_map: dict,
+    species: str,
+    field_name: str,
+    frame: Frame,
+) -> float:
+    if species in species_map:
+        return float(species_map[species])
+    species_key = str(species)
+    if species_key in species_map:
+        return float(species_map[species_key])
+
+    available = ", ".join(sorted(str(key) for key in species_map))
+    raise ValueError(
+        f"{field_name} is missing a value for source species {species!r}. "
+        f"Available keys: [{available}]. "
+        "If your trajectory carries raw integer atom types, provide source.type_map "
+        "so graphcluster can resolve chemical symbols."
     )
