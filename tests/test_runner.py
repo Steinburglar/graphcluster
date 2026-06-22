@@ -10,6 +10,7 @@ from pathlib import Path
 
 from ase import Atoms
 from ase.io import write
+import pytest
 
 from graphcluster.runner import TrajectoryPartitionRunner
 
@@ -272,6 +273,45 @@ def test_runner_can_process_preannotated_allegro_trajectory(tmp_path: Path) -> N
     assert result.frames_processed == 1
     assert result.collected_bundles[0].graph.metadata["source"] == "allegro"
     assert result.collected_bundles[0].graph.adjacency[0, 1] == 0.5
+
+
+def test_runner_can_precondition_allegro_edge_scale(
+    tmp_path: Path,
+) -> None:
+    traj_path = tmp_path / "scaled_allegro.traj"
+    atoms = Atoms("GaPt", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    atoms.info["allegro_edge_indices"] = [[0, 1], [1, 0]]
+    atoms.info["allegro_edge_energies"] = [-2.0, -2.0]
+    write(traj_path, atoms, format="traj")
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "source:",
+                f"  path: {traj_path}",
+                "selection:",
+                "  start: 0",
+                "  stop: 1",
+                "  stride: 1",
+                "edges:",
+                "  kind: allegro",
+                "  allegro_scaling:",
+                "    percentile: 100.0",
+                "    sample_edge_budget: 1",
+                "partition:",
+                "  algorithm: leiden",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    runner = TrajectoryPartitionRunner.from_config_path(config_path)
+    result = runner.run(collect_bundles=True)
+
+    bundle = result.collected_bundles[0]
+    assert bundle.graph.metadata["allegro_edge_scale"] == pytest.approx(2.0)
+    assert bundle.graph.adjacency[0, 1] == pytest.approx(2.0)
 
 
 def test_runner_fails_clearly_when_allegro_source_is_not_annotated(tmp_path: Path) -> None:

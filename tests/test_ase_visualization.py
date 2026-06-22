@@ -136,3 +136,50 @@ def test_pipeline_can_run_analysis_and_write_visualization(
     assert frames[0].arrays["cluster_label"].shape[0] == 129
     assert list(frames[0].info["cell_origin"]) == [-29.0, -29.0, -29.0]
     assert len(report.get_frame_cluster_counts()) == 2
+
+
+def test_pipeline_defaults_artifacts_into_artifacts_directory(
+    tmp_path: Path,
+    default_toy_dataset: Path,
+) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "source:",
+                f"  path: {default_toy_dataset}",
+                "  type_map:",
+                "    1: Ga",
+                "    2: Pt",
+                "selection:",
+                "  start: 0",
+                "  stop: 1",
+                "  stride: 1",
+                "edges:",
+                "  kind: binary",
+                "  cutoff: 3.5",
+                "partition:",
+                "  algorithm: leiden",
+                "artifacts:",
+                f"  directory: {artifact_dir}",
+                "  visualization:",
+                "    enabled: true",
+                "    backend: ase",
+                "    mode: traj",
+                "  lifecycle_report:",
+                "    enabled: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    runner = TrajectoryPartitionRunner.from_config_path(config_path)
+    result = runner.run(collect_bundles=True)
+
+    visualization_path = artifact_dir / "visualization.extxyz"
+    report_path = artifact_dir / "cluster_lifecycle_report.jsonl"
+    assert result.visualization_artifacts == [visualization_path]
+    assert result.analysis_artifact == report_path
+    assert visualization_path.exists()
+    assert report_path.exists()

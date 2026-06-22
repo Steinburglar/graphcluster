@@ -100,6 +100,11 @@ class GraphBuilder:
             metadata["cutoff"] = cutoff
             metadata["cutoff_source"] = cutoff_source
             metadata["kernel"] = resolve_kernel_config(edges_config)[0]
+        else:
+            if "allegro_edge_scale" in edges_config:
+                metadata["allegro_edge_scale"] = float(edges_config["allegro_edge_scale"])
+            if edges_config.get("allegro_scaling"):
+                metadata["allegro_scaling"] = dict(edges_config["allegro_scaling"])
         return SparseWeightedGraph(
             frame_index=frame.index,
             adjacency=adjacency,

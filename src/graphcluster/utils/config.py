@@ -40,6 +40,7 @@ def normalize_config(data: dict, *, config_path: str | Path | None = None) -> di
 
     selection = dict(data.get("selection") or {})
     edges = dict(data.get("edges") or {})
+    allegro_scaling = dict(edges.get("allegro_scaling") or {})
     artifacts = dict(data.get("artifacts") or {})
     visualization = dict(artifacts.get("visualization") or {})
     lifecycle_report = dict(artifacts.get("lifecycle_report") or {})
@@ -68,6 +69,16 @@ def normalize_config(data: dict, *, config_path: str | Path | None = None) -> di
             "energy_field": str(edges.get("energy_field", "raw")),
             "species_shifts": dict(edges.get("species_shifts") or {}),
             "avg_num_neighbors": edges.get("avg_num_neighbors"),
+            "allegro_scaling": {
+                "percentile": float(allegro_scaling.get("percentile", 99.5))
+                if allegro_scaling
+                else None,
+                "sample_edge_budget": int(allegro_scaling.get("sample_edge_budget", 200_000))
+                if allegro_scaling
+                else None,
+            }
+            if allegro_scaling
+            else {},
         },
         "partition": dict(data.get("partition") or {}),
         "tracking": dict(data.get("tracking") or {}),

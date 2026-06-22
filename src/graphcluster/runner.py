@@ -26,6 +26,7 @@ from typing import Callable
 from .analysis.lifecycle_recorder import ClusterLifecycleRecorder
 from .bundle.frame_bundle import FrameBundle
 from .graph.graph_builder import GraphBuilder
+from .graph.allegro_edges import estimate_allegro_edge_scale
 from .io.trajectory_reader import TrajectoryReader
 from .partitioning.partitioner import Partitioner
 from .tracking.cluster_tracker import ClusterTracker
@@ -75,6 +76,23 @@ class TrajectoryPartitionRunner:
         phase_started = perf_counter()
         reader = TrajectoryReader.from_config(config)
         startup_timings["reader_init"] = perf_counter() - phase_started
+
+        phase_started = perf_counter()
+        edges_config = dict(config.get("edges") or {})
+        scaling_config = dict(edges_config.get("allegro_scaling") or {})
+        allegro_scale = None
+        if scaling_config:
+            if str(edges_config.get("kind", "")) != "allegro":
+                raise ValueError(
+                    "edges.allegro_scaling is only valid when edges.kind='allegro'."
+                )
+            allegro_scale = estimate_allegro_edge_scale(iter(reader), edges_config)
+        startup_timings["allegro_edge_scaling"] = perf_counter() - phase_started
+        if allegro_scale is not None:
+            config = dict(config)
+            updated_edges_config = dict(config.get("edges", {}))
+            updated_edges_config["allegro_edge_scale"] = allegro_scale
+            config["edges"] = updated_edges_config
 
         phase_started = perf_counter()
         graph_builder = GraphBuilder.from_config(config)
@@ -237,11 +255,11 @@ class TrajectoryPartitionRunner:
         profiling_config = self.config.get("profiling", {})
         return bool(profiling_config.get("enabled", False))
 
-
 STARTUP_TIMING_ORDER = (
     "startup_total",
     "load_config",
     "reader_init",
+    "allegro_edge_scaling",
     "graph_builder_init",
     "partitioner_init",
     "tracker_init",

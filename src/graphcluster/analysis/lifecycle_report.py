@@ -104,7 +104,22 @@ class ClusterLifecycleReport:
                 "num_clusters": record["num_clusters"],
                 "num_changed_atoms": record["num_changed_atoms"],
             }
+                for record in self.frame_records
+        ]
+
+    def has_reaction_tracking(self) -> bool:
+        """Return whether the summary contains reaction-tracking output."""
+        return bool(self.summary.get("reaction_tracking"))
+
+    def get_frame_reaction_tracking(self) -> list[dict[str, Any]]:
+        """Return per-frame reaction-tracking summaries when present."""
+        return [
+            {
+                "frame_index": record["frame_index"],
+                "reaction_tracking": dict(record["reaction_tracking"]),
+            }
             for record in self.frame_records
+            if "reaction_tracking" in record
         ]
 
     def has_cluster_energy(self) -> bool:
@@ -188,6 +203,13 @@ class ClusterLifecycleReport:
     def get_summary_table(self) -> dict[str, Any]:
         """Return the headline run summary as a plain dictionary."""
         return dict(self.summary)
+
+    def get_top_reaction_frames(self) -> list[dict[str, Any]]:
+        """Return the most reactive frames recorded in the summary."""
+        reaction_tracking = self.summary.get("reaction_tracking")
+        if not isinstance(reaction_tracking, dict):
+            return []
+        return list(reaction_tracking.get("top_frames", []))
 
     def get_event_counts(self) -> dict[str, int]:
         """Return total birth/death/split/merge counts from the summary."""

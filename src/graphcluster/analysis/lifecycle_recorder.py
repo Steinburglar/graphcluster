@@ -10,6 +10,7 @@ memory.
 
 from __future__ import annotations
 
+import heapq
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,9 @@ class ClusterLifecycleRecorder:
     cluster_energy_species_scales: dict[str, float] = field(default_factory=dict)
     cluster_energy_species_shifts: dict[str, float] = field(default_factory=dict)
     cluster_energy_avg_num_neighbors: float | dict[str, float] | None = None
+    reaction_tracking_enabled: bool = False
+    reaction_tracking_top_n_frames: int = 10
+    reaction_tracking_required_species: tuple[str, ...] = field(default_factory=tuple)
     _pending_records: list[dict] = field(default_factory=list, init=False, repr=False)
     _header_written: bool = field(default=False, init=False, repr=False)
     _frames_processed: int = field(default=0, init=False, repr=False)
@@ -50,6 +54,13 @@ class ClusterLifecycleRecorder:
     _total_deaths: int = field(default=0, init=False, repr=False)
     _total_splits: int = field(default=0, init=False, repr=False)
     _total_merges: int = field(default=0, init=False, repr=False)
+    _reaction_previous_cluster_energy: dict[int, float] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _reaction_top_frames: list[tuple[float, int, dict]] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _reaction_frames_scored: int = field(default=0, init=False, repr=False)
 
     @classmethod
     def from_config(cls, config: dict) -> "ClusterLifecycleRecorder":
@@ -60,6 +71,7 @@ class ClusterLifecycleRecorder:
         reconstruction_config = dict(
             cluster_energy_config.get("model_energy_reconstruction") or {}
         )
+        reaction_tracking_config = dict(lifecycle_config.get("reaction_tracking") or {})
         output_path = _resolve_output_path(artifacts_config, lifecycle_config)
         return cls(
             enabled=lifecycle_config.get("enabled", False),
@@ -83,6 +95,13 @@ class ClusterLifecycleRecorder:
             },
             cluster_energy_avg_num_neighbors=_normalize_avg_num_neighbors(
                 reconstruction_config.get("avg_num_neighbors")
+            ),
+            reaction_tracking_enabled=bool(reaction_tracking_config.get("enabled", False)),
+            reaction_tracking_top_n_frames=max(
+                0, int(reaction_tracking_config.get("top_n_frames", 10))
+            ),
+            reaction_tracking_required_species=_normalize_required_species(
+                reaction_tracking_config.get("required_species")
             ),
         )
 
@@ -138,6 +157,9 @@ class ClusterLifecycleRecorder:
         self._total_splits += len(splits)
         self._total_merges += len(merges)
         cluster_energy_record = self._build_cluster_energy_record(bundle)
+        reaction_tracking_record = self._build_reaction_tracking_record(
+            bundle, cluster_energy_record
+        )
 
         frame_record = {
             "record_type": "frame",
@@ -171,6 +193,8 @@ class ClusterLifecycleRecorder:
         }
         if cluster_energy_record is not None:
             frame_record["cluster_energy"] = cluster_energy_record
+        if reaction_tracking_record is not None:
+            frame_record["reaction_tracking"] = reaction_tracking_record
         self._frame_cluster_counts.append(
             {
                 "frame_index": bundle.frame.index,
@@ -216,6 +240,21 @@ class ClusterLifecycleRecorder:
                 for cluster_id in sorted(self._cluster_first_seen)
             ],
         }
+        if self.reaction_tracking_enabled:
+            summary_record["summary"]["reaction_tracking"] = {
+                "enabled": True,
+                "energy_field": "combined_model_energy",
+                "signal_kind": "raw_delta",
+                "required_species": list(self.reaction_tracking_required_species),
+                "top_n_frames": self.reaction_tracking_top_n_frames,
+                "frames_scored": self._reaction_frames_scored,
+                "top_frames": [
+                    reaction_record
+                    for _, _, reaction_record in sorted(
+                        self._reaction_top_frames, key=lambda item: (-item[0], item[1])
+                    )
+                ],
+            }
         with self.output_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(summary_record, sort_keys=True))
             handle.write("\n")
@@ -259,6 +298,116 @@ class ClusterLifecycleRecorder:
                 else None
             ),
         }
+
+    def _build_reaction_tracking_record(
+        self,
+        bundle: FrameBundle,
+        cluster_energy_record: dict | None,
+    ) -> dict | None:
+        """Build a per-frame reaction score from raw cluster model-energy deltas."""
+        if not self.reaction_tracking_enabled:
+            return None
+        if cluster_energy_record is None:
+            raise ValueError(
+                "Reaction tracking requires lifecycle_report.cluster_energy.enabled = true."
+            )
+
+        reconstruction = cluster_energy_record.get("model_energy_reconstruction")
+        if not isinstance(reconstruction, dict) or not reconstruction.get("enabled", False):
+            raise ValueError(
+                "Reaction tracking requires lifecycle_report.cluster_energy."
+                "model_energy_reconstruction.enabled = true because it uses reconstructed "
+                "cluster model energies as E_atom."
+            )
+
+        species_labels = _resolve_frame_species_labels(bundle)
+        tracked_labels = list(bundle.partition.labels)
+        cluster_species_counts = _count_cluster_species(tracked_labels, species_labels)
+
+        eligible_cluster_count = 0
+        best_candidate: dict[str, object] | None = None
+        for cluster_record in reconstruction.get("clusters", []):
+            cluster_id = int(cluster_record["cluster_id"])
+            if not _cluster_has_required_species(
+                cluster_species_counts.get(cluster_id, {}),
+                self.reaction_tracking_required_species,
+            ):
+                continue
+            eligible_cluster_count += 1
+
+            current_energy = float(cluster_record.get("combined_model_energy", 0.0))
+            previous_energy = self._reaction_previous_cluster_energy.get(cluster_id)
+            self._reaction_previous_cluster_energy[cluster_id] = current_energy
+            if previous_energy is None:
+                continue
+
+            delta_energy = current_energy - previous_energy
+            score = abs(delta_energy)
+            candidate = {
+                "cluster_id": cluster_id,
+                "size": int(cluster_record.get("size", 0)),
+                "species_counts": dict(cluster_species_counts.get(cluster_id, {})),
+                "previous_energy": previous_energy,
+                "current_energy": current_energy,
+                "delta_energy": delta_energy,
+                "score": score,
+            }
+            if best_candidate is None or score > float(best_candidate["score"]):
+                best_candidate = candidate
+
+        if best_candidate is not None and float(best_candidate["score"]) > 0.0:
+            self._reaction_frames_scored += 1
+            self._update_reaction_top_frames(bundle.frame.index, best_candidate)
+
+        return {
+            "enabled": True,
+            "energy_field": "combined_model_energy",
+            "signal_kind": "raw_delta",
+            "required_species": list(self.reaction_tracking_required_species),
+            "eligible_cluster_count": eligible_cluster_count,
+            "score": float(best_candidate["score"]) if best_candidate is not None else 0.0,
+            "best_cluster_id": (
+                int(best_candidate["cluster_id"]) if best_candidate is not None else None
+            ),
+            "best_cluster_size": (
+                int(best_candidate["size"]) if best_candidate is not None else None
+            ),
+            "best_cluster_species_counts": (
+                dict(best_candidate["species_counts"]) if best_candidate is not None else {}
+            ),
+            "best_previous_energy": (
+                float(best_candidate["previous_energy"]) if best_candidate is not None else None
+            ),
+            "best_current_energy": (
+                float(best_candidate["current_energy"]) if best_candidate is not None else None
+            ),
+            "best_delta_energy": (
+                float(best_candidate["delta_energy"]) if best_candidate is not None else None
+            ),
+        }
+
+    def _update_reaction_top_frames(self, frame_index: int, candidate: dict[str, object]) -> None:
+        """Maintain a bounded top-N list of the most reactive frames."""
+        top_n = int(self.reaction_tracking_top_n_frames)
+        if top_n <= 0:
+            return
+
+        reaction_record = {
+            "frame_index": frame_index,
+            "score": float(candidate["score"]),
+            "best_cluster_id": int(candidate["cluster_id"]),
+            "best_cluster_size": int(candidate["size"]),
+            "best_cluster_species_counts": dict(candidate["species_counts"]),
+            "best_previous_energy": float(candidate["previous_energy"]),
+            "best_current_energy": float(candidate["current_energy"]),
+            "best_delta_energy": float(candidate["delta_energy"]),
+        }
+        heap_item = (reaction_record["score"], frame_index, reaction_record)
+        if len(self._reaction_top_frames) < top_n:
+            heapq.heappush(self._reaction_top_frames, heap_item)
+            return
+        if heap_item[0] > self._reaction_top_frames[0][0]:
+            heapq.heapreplace(self._reaction_top_frames, heap_item)
 
     def artifact_path(self) -> Path | None:
         """Return the configured report artifact path."""
@@ -315,6 +464,52 @@ def _count_cluster_sizes(labels: list[int]) -> dict[int, int]:
     for label in labels:
         sizes[label] = sizes.get(label, 0) + 1
     return sizes
+
+
+def _count_cluster_species(
+    labels: list[int],
+    species_labels: list[str],
+) -> dict[int, dict[str, int]]:
+    """Count species per tracked cluster."""
+    cluster_species: dict[int, dict[str, int]] = {}
+    for cluster_id, species_label in zip(labels, species_labels, strict=True):
+        species_counts = cluster_species.setdefault(cluster_id, {})
+        species_counts[species_label] = species_counts.get(species_label, 0) + 1
+    return cluster_species
+
+
+def _cluster_has_required_species(
+    cluster_species_counts: dict[str, int],
+    required_species: tuple[str, ...],
+) -> bool:
+    """Return whether a cluster contains every required species."""
+    return all(int(cluster_species_counts.get(species_label, 0)) > 0 for species_label in required_species)
+
+
+def _resolve_frame_species_labels(bundle: FrameBundle) -> list[str]:
+    """Resolve one species label per atom for a frame bundle."""
+    frame = bundle.frame
+    if frame.chemical_symbols is not None:
+        return [str(label) for label in frame.chemical_symbols]
+    if frame.atom_types is not None:
+        return [str(label) for label in frame.atom_types]
+    raise ValueError(
+        "Reaction tracking requires frame.chemical_symbols or frame.atom_types "
+        f"to be available in frame {frame.index}."
+    )
+
+
+def _normalize_required_species(value) -> tuple[str, ...]:
+    """Normalize optional required_species config into a tuple of strings."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item) for item in value)
+    raise TypeError(
+        "lifecycle_report.reaction_tracking.required_species must be a string or list."
+    )
 
 
 def _normalize_avg_num_neighbors(value):

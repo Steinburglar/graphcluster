@@ -18,6 +18,7 @@ from graphcluster.analysis.lifecycle_report import ClusterLifecycleReport
 from graphcluster.bundle.frame_bundle import FrameBundle
 from graphcluster.graph.sparse_graph import SparseWeightedGraph
 from graphcluster.io.frame import Frame
+from graphcluster.io.trajectory_reader import TrajectoryReader
 from graphcluster.partitioning.partition import Partition
 
 
@@ -187,6 +188,146 @@ def test_lifecycle_recorder_fails_clearly_when_cluster_energy_requested_but_miss
 
     with pytest.raises(ValueError, match="Raw Allegro cluster energy tracking requires"):
         recorder.consume(bundle)
+
+
+def test_lifecycle_recorder_tracks_top_reaction_frames_by_raw_delta_and_species_filter(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "cluster_lifecycle_report.jsonl"
+    recorder = ClusterLifecycleRecorder.from_config(
+        {
+            "artifacts": {
+                "lifecycle_report": {
+                    "enabled": True,
+                    "output_path": str(report_path),
+                    "cluster_energy": {
+                        "enabled": True,
+                        "model_energy_reconstruction": {
+                            "enabled": True,
+                            "species_scales": {},
+                            "species_shifts": {},
+                            "avg_num_neighbors": 1.0,
+                        },
+                    },
+                    "reaction_tracking": {
+                        "enabled": True,
+                        "top_n_frames": 2,
+                        "required_species": ["Pt"],
+                    },
+                }
+            }
+        }
+    )
+
+    sqrt2 = 2.0**0.5
+    frames = [
+        _build_bundle(
+            frame_index=0,
+            labels=[0, 0, 1],
+            edge_index=[[0, 1], [2, 0]],
+            edge_energy=[1.0 * sqrt2, 100.0],
+            chemical_symbols=["Pt", "H", "H"],
+        ),
+        _build_bundle(
+            frame_index=1,
+            labels=[0, 0, 1],
+            edge_index=[[0, 1], [2, 0]],
+            edge_energy=[5.0 * sqrt2, 1000.0],
+            chemical_symbols=["Pt", "H", "H"],
+        ),
+        _build_bundle(
+            frame_index=2,
+            labels=[0, 0, 1],
+            edge_index=[[0, 1], [2, 0]],
+            edge_energy=[2.0 * sqrt2, 10.0],
+            chemical_symbols=["Pt", "H", "H"],
+        ),
+    ]
+
+    for bundle in frames:
+        recorder.consume(bundle)
+    artifact_path = recorder.finalize()
+    assert artifact_path == report_path
+
+    report = ClusterLifecycleReport.from_path(report_path)
+    assert report.has_reaction_tracking() is True
+
+    frame_reaction_tracking = report.get_frame_reaction_tracking()
+    assert [record["frame_index"] for record in frame_reaction_tracking] == [0, 1, 2]
+    assert frame_reaction_tracking[0]["reaction_tracking"]["eligible_cluster_count"] == 1
+    assert frame_reaction_tracking[1]["reaction_tracking"]["score"] == pytest.approx(4.0)
+    assert frame_reaction_tracking[1]["reaction_tracking"]["best_cluster_id"] == 0
+    assert frame_reaction_tracking[2]["reaction_tracking"]["score"] == pytest.approx(3.0)
+
+    top_frames = report.get_top_reaction_frames()
+    assert [record["frame_index"] for record in top_frames] == [1, 2]
+    assert top_frames[0]["score"] == pytest.approx(4.0)
+    assert top_frames[0]["best_cluster_id"] == 0
+    assert top_frames[1]["score"] == pytest.approx(3.0)
+
+
+def test_lifecycle_recorder_can_score_reaction_frames_on_foundation_edge_trajectory(
+    tmp_path: Path,
+) -> None:
+    trajectory_path = Path(
+        "/n/home12/lsteinberger/systems/hpt/data/trajectories/annotated_allegro_edges/"
+        "hpt_600k_allegro_edges.traj"
+    )
+    reader = TrajectoryReader(
+        trajectory_path=str(trajectory_path),
+        start=0,
+        stop=2,
+        stride=1,
+        format="traj",
+        backend="ase",
+    )
+
+    report_path = tmp_path / "cluster_lifecycle_report.jsonl"
+    recorder = ClusterLifecycleRecorder.from_config(
+        {
+            "artifacts": {
+                "lifecycle_report": {
+                    "enabled": True,
+                    "output_path": str(report_path),
+                    "cluster_energy": {
+                        "enabled": True,
+                        "model_energy_reconstruction": {
+                            "enabled": True,
+                            "avg_num_neighbors": 1.0,
+                        },
+                    },
+                    "reaction_tracking": {
+                        "enabled": True,
+                        "top_n_frames": 1,
+                        "required_species": ["Pt"],
+                    },
+                }
+            }
+        }
+    )
+
+    for frame in reader:
+        labels = [0 for _ in frame.positions]
+        bundle = FrameBundle(
+            frame=frame,
+            graph=SparseWeightedGraph(
+                frame_index=frame.index,
+                metadata={"num_nodes": len(frame.positions)},
+            ),
+            partition=Partition(frame_index=frame.index, labels=labels, kind="tracked", metadata={}),
+            local_partition=Partition(frame_index=frame.index, labels=labels, kind="local"),
+        )
+        recorder.consume(bundle)
+
+    recorder.finalize()
+    report = ClusterLifecycleReport.from_path(report_path)
+    top_frames = report.get_top_reaction_frames()
+
+    assert report.has_reaction_tracking() is True
+    assert len(top_frames) == 1
+    assert top_frames[0]["frame_index"] in {0, 1}
+    assert top_frames[0]["best_cluster_id"] == 0
+    assert top_frames[0]["best_cluster_species_counts"]["Pt"] >= 1
 
 
 def test_lifecycle_report_exposes_cluster_energy_helpers(tmp_path: Path) -> None:
@@ -370,6 +511,7 @@ def test_lifecycle_report_backfills_per_atom_fields_for_older_artifacts(tmp_path
 
 def _build_bundle(
     *,
+    frame_index: int = 0,
     labels: list[int],
     edge_index: list[list[int]],
     edge_energy: list[float],
@@ -383,15 +525,15 @@ def _build_bundle(
     }
     return FrameBundle(
         frame=Frame(
-            index=0,
+            index=frame_index,
             positions=[[float(index), 0.0, 0.0] for index in range(num_nodes)],
             chemical_symbols=chemical_symbols,
             metadata=metadata,
         ),
         graph=SparseWeightedGraph(
-            frame_index=0,
+            frame_index=frame_index,
             metadata={"num_nodes": num_nodes, **(graph_metadata or {})},
         ),
-        partition=Partition(frame_index=0, labels=list(labels), kind="tracked", metadata={}),
-        local_partition=Partition(frame_index=0, labels=list(labels), kind="local"),
+        partition=Partition(frame_index=frame_index, labels=list(labels), kind="tracked", metadata={}),
+        local_partition=Partition(frame_index=frame_index, labels=list(labels), kind="local"),
     )

@@ -13,6 +13,9 @@ frames:
 graph:
   source: allegro
   directed: false
+  allegro_scaling:
+    percentile: 99.5
+    sample_edge_budget: 200000
 
 partition:
   algorithm: leiden

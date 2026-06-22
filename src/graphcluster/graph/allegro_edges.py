@@ -23,6 +23,7 @@ which expects a symmetric weighted graph.
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Iterable
 
 import numpy as np
 from scipy import sparse
@@ -52,12 +53,17 @@ def build_allegro_adjacency(frame: Frame, edges_config: dict) -> sparse.csr_matr
     validate_edge_payload(edge_index=edge_index, edge_energy=edge_energy, num_nodes=num_nodes)
 
     energy_to_weight = str(edges_config.get("energy_to_weight", "abs_negative_sum"))
+    edge_scale = float(edges_config.get("allegro_edge_scale", 1.0))
+    if edge_scale <= 0:
+        raise ValueError("edges.allegro_edge_scale must be positive.")
+
     undirected_weights = combine_directed_edge_energies(
         edge_index=edge_index,
         edge_energy=edge_energy,
         energy_to_weight=energy_to_weight,
         frame=frame,
         edges_config=edges_config,
+        edge_scale=edge_scale,
     )
     if not undirected_weights:
         return sparse.csr_matrix((num_nodes, num_nodes), dtype=float)
@@ -183,6 +189,7 @@ def combine_directed_edge_energies(
     energy_to_weight: str,
     frame: Frame,
     edges_config: dict,
+    edge_scale: float,
 ) -> dict[tuple[int, int], float]:
     """Collapse directed edge energies into undirected bond strengths.
 
@@ -204,6 +211,7 @@ def combine_directed_edge_energies(
         )
         if contribution == 0:
             continue
+        contribution /= edge_scale
         pair = tuple(sorted((int(source), int(target))))
         undirected_weights[pair] += contribution
     return dict(undirected_weights)
@@ -299,3 +307,63 @@ def _lookup_species_value(
         "If your trajectory carries raw integer atom types, provide source.type_map "
         "so graphcluster can resolve chemical symbols."
     )
+
+
+def estimate_allegro_edge_scale(
+    frames: Iterable[Frame],
+    edges_config: dict,
+) -> float:
+    """Estimate Allegro edge normalization scale from a small frame prefix.
+
+    The estimator samples directed edge magnitudes from the selected Allegro
+    energy field until the configured edge budget is reached, then returns the
+    requested percentile of absolute values. This is meant as graph-level
+    preconditioning, not model scaling.
+    """
+    scaling_config = dict(edges_config.get("allegro_scaling") or {})
+    if not scaling_config:
+        return 1.0
+
+    percentile = float(scaling_config.get("percentile", 99.5))
+    sample_edge_budget = int(scaling_config.get("sample_edge_budget", 200_000))
+    if sample_edge_budget <= 0:
+        raise ValueError("edges.allegro_scaling.sample_edge_budget must be positive.")
+    if percentile <= 0 or percentile > 100:
+        raise ValueError("edges.allegro_scaling.percentile must be in (0, 100].")
+
+    sampled_magnitudes: list[float] = []
+    sampled_edges = 0
+    for frame in frames:
+        ase_info = extract_allegro_metadata(frame)
+        edge_index = np.asarray(ase_info[EDGE_INDICES_INFO_KEY], dtype=int)
+        edge_energy_key = resolve_edge_energy_key(ase_info, edges_config)
+        edge_energy = np.asarray(ase_info[edge_energy_key], dtype=float).reshape(-1)
+        edge_index = normalize_edge_index(edge_index)
+        validate_edge_payload(
+            edge_index=edge_index,
+            edge_energy=edge_energy,
+            num_nodes=len(frame.positions),
+        )
+
+        for (source, target), energy in zip(edge_index, edge_energy, strict=True):
+            if int(source) == int(target):
+                continue
+            sampled_magnitudes.append(abs(float(energy)))
+            sampled_edges += 1
+            if sampled_edges >= sample_edge_budget:
+                break
+        if sampled_edges >= sample_edge_budget:
+            break
+
+    if not sampled_magnitudes:
+        raise ValueError(
+            "edges.allegro_scaling could not sample any non-self Allegro edges."
+        )
+
+    scale = float(np.percentile(np.asarray(sampled_magnitudes, dtype=float), percentile))
+    if scale <= 0 or not np.isfinite(scale):
+        raise ValueError(
+            "edges.allegro_scaling produced a nonpositive scale. "
+            "Check sampled Allegro edge magnitudes."
+        )
+    return scale
